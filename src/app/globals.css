@@ -1,0 +1,73 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN",
+    "Yu Gothic", "Segoe UI", Meiryo, sans-serif;
+  font-size: 15px;
+  line-height: 1.7;
+  color: #1f2937;
+  background: #f7f9fb;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: #2f7ba6;
+}
+
+table {
+  font-size: 14px;
+}
+
+.admin-table tbody tr:hover {
+  background: #f4f8fa;
+}
+
+/* サイドメニューのグループ見出し: 配下の項目は、ホバー時だけ展開表示する
+   (配下のページを表示中の場合は、ホバーしていなくても展開したままにする)。
+   display: none/block の瞬時切り替えではなく、max-height・opacityをアニメーションさせて
+   滑らかに開閉するようにしている。 */
+.admin-nav-group-children {
+  max-height: 0;
+  opacity: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease, opacity 0.2s ease;
+}
+
+.admin-nav-group:hover .admin-nav-group-children,
+.admin-nav-group-children--open {
+  max-height: 400px;
+  opacity: 1;
+}
+
+/* グループ見出し右の「∨」矢印。開いている間は上向き(∧相当)に回転させる */
+.admin-nav-group-arrow {
+  display: inline-block;
+  transition: transform 0.2s ease;
+}
+
+.admin-nav-group:hover .admin-nav-group-arrow,
+.admin-nav-group--active .admin-nav-group-arrow {
+  transform: rotate(180deg);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+input {
+  font-family: inherit;
+}

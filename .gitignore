@@ -1,0 +1,17 @@
+# 依存パッケージ(npm install で復元できる)
+/node_modules
+
+# Next.jsのビルド結果
+/.next/
+/out/
+
+# 秘密の値(Firebaseの秘密鍵・LINEのトークン等)。絶対にリポジトリに含めない
+.env
+.env.local
+.env.*.local
+
+# その他
+.DS_Store
+*.tsbuildinfo
+npm-debug.log*
+.vercel
