@@ -27,15 +27,20 @@ import type {
 //
 // conversions コレクション(自動計測された成果)自体は書き換えず、report_cv_entries コレクションの
 // 上書き情報(手動追加 or 非表示マーク)を突き合わせて、最終的に集計・表示に使う一覧を作る。
+function normalizeSourceKey(name: string): string {
+  return name.normalize("NFKC").trim();
+}
+
 export type EffectiveCvEntry = {
   id: string;
   kind: "auto" | "import";
   hidden: boolean;
   convertedAt: number;
-  // kind: "auto" (conversionsに実体があるもの)のみ
-  userId?: string;
+  // sourceId・latestSourceId: 自動計測は記録された値。インポートは、流入経路名が登録済みの流入経路と一致したときだけ入る
   sourceId?: string;
   latestSourceId?: string;
+  // kind: "auto" (conversionsに実体があるもの)のみ
+  userId?: string;
   purchaseLinkId?: string;
   clickId?: string;
   // 請求額の計算に使う、この成果の広告の成果単価(円)。広告の成果単価が未設定・広告が特定できない場合は0
@@ -49,7 +54,7 @@ export type EffectiveCvEntry = {
 // 日付の範囲(ミリ秒)を指定して、その範囲内の実効成果一覧を返す。
 // (Firestoreの読み取り件数を無制限に増やさないよう、必ず日付範囲で絞り込んで問い合わせる)
 export async function getEffectiveCvEntries(fromMs: number, toMs: number): Promise<EffectiveCvEntry[]> {
-  const [conversionsSnap, overridesSnap, purchaseLinks] = await Promise.all([
+  const [conversionsSnap, overridesSnap, purchaseLinks, sources] = await Promise.all([
     adminDb
       .collection("conversions")
       .where("convertedAt", ">=", fromMs)
@@ -63,7 +68,14 @@ export async function getEffectiveCvEntries(fromMs: number, toMs: number): Promi
       .orderBy("convertedAt", "desc")
       .get(),
     getAllPurchaseLinks(),
+    getAllSources(),
   ]);
+
+  // 手動追加(インポート)した成果は流入経路名しか持たないため、登録済みの流入経路名と突き合わせて
+  // sourceIdを割り出す。ポップアップ別・シナリオ別などの集計で、自動計測の成果と同じように振り分けるため。
+  // (全角半角・前後の空白の違いは無視する。一致する流入経路がない場合は未設定として扱う)
+  const sourceIdByName = new Map<string, string>();
+  sources.forEach((src) => sourceIdByName.set(normalizeSourceKey(src.name), src.sourceId));
 
   // 広告ごとの成果単価(請求額の計算用)。自動計測の成果はpurchaseLinkId、CSV等で手動追加した成果は広告名の完全一致で突き合わせる。
   const unitPriceById = new Map<string, number>();
@@ -101,11 +113,14 @@ export async function getEffectiveCvEntries(fromMs: number, toMs: number): Promi
   overrides
     .filter((o) => o.kind === "import")
     .forEach((o) => {
+      const matchedSourceId = o.sourceName ? sourceIdByName.get(normalizeSourceKey(o.sourceName)) : undefined;
       entries.push({
         id: o.id,
         kind: "import",
         hidden: o.hidden,
         convertedAt: o.convertedAt,
+        sourceId: matchedSourceId,
+        latestSourceId: matchedSourceId,
         note: o.note,
         sourceName: o.sourceName,
         purchaseLinkName: o.purchaseLinkName,
@@ -352,10 +367,11 @@ export async function getPopupLabelMap(): Promise<Map<string, string>> {
 
 export type PopupDailyReportRow = {
   date: string; // YYYY-MM-DD (日本時間)
-  popup: string; // ポップアップ名。未設定は「(未設定)」、CSV等で手動追加した成果(流入経路と紐付かない)は「(インポート)」
+  popup: string; // ポップアップ名。未設定は「(未設定)」。CSV等で手動追加した成果も、流入経路名が一致すれば、その流入経路の値で集計する(一致しなければ「(未設定)」)
   pvCount: number | null; // 未インポート・未入力の(日付, ポップアップ)はnull
   impCount: number | null; // 未インポートの(日付, ポップアップ)はnull
   clCount: number | null; // 未インポートの(日付, ポップアップ)はnull
+  impRate: number | null; // パーセント(imp数 ÷ PV数)。imp数・PV数のいずれかが未インポート・未入力、もしくはPV数が0の場合はnull
   clRate: number | null; // パーセント(CL数 ÷ imp数)。いずれかが未インポート、もしくはimp数が0の場合はnull
   friendCount: number;
   friendAddRate: number | null; // パーセント(友だち追加数 ÷ CL数)。CL数が未インポート、もしくは0の場合はnull
@@ -419,11 +435,9 @@ export function buildPopupDailyReport(
   cvEntries
     .filter((c) => !c.hidden)
     .forEach((c) => {
-      // "import"(CSV等で手動追加した成果)は流入経路(sourceId)を持たないため、ポップアップに紐付けられない。
-      // 「(インポート)」の専用バケットとして集計する。
-      // "auto"の場合、成果時点で最新だった流入経路(latestSourceId)を優先し、
+      // 成果時点で最新だった流入経路(latestSourceId)を優先し、
       // 再クリックが一度も無い場合は友だち追加時(ファーストタッチ)のsourceIdにフォールバックする。
-      const popup = c.kind === "auto" ? popupOf(c.latestSourceId ?? c.sourceId) : "(インポート)";
+      const popup = popupOf(c.latestSourceId ?? c.sourceId);
       popups.add(popup);
       const key = `${dateKeyJST(c.convertedAt)}__${popup}`;
       cvCountByKey.set(key, (cvCountByKey.get(key) ?? 0) + 1);
@@ -433,7 +447,7 @@ export function buildPopupDailyReport(
   adMetrics.forEach((m) => popups.add(m.popup));
 
   const sortedPopups = Array.from(popups).sort((a, b) => {
-    // 「(未設定)」「(インポート)」は末尾に固定し、それ以外は五十音・アルファベット順
+    // 「(未設定)」は末尾に固定し、それ以外は五十音・アルファベット順
     const isSpecialA = a.startsWith("(");
     const isSpecialB = b.startsWith("(");
     if (isSpecialA !== isSpecialB) return isSpecialA ? 1 : -1;
@@ -454,6 +468,8 @@ export function buildPopupDailyReport(
       const pvCount = metrics?.pvCount ?? dailyAdMetricsByDate.get(dateKey)?.pvCount ?? null;
       const impCount = metrics?.impCount ?? null;
       const clCount = metrics?.clCount ?? null;
+      const impRate =
+        impCount !== null && pvCount !== null && pvCount > 0 ? Math.round((impCount / pvCount) * 1000) / 10 : null;
       const clRate =
         clCount !== null && impCount !== null && impCount > 0 ? Math.round((clCount / impCount) * 1000) / 10 : null;
       const friendAddRate =
@@ -464,6 +480,7 @@ export function buildPopupDailyReport(
         pvCount,
         impCount,
         clCount,
+        impRate,
         clRate,
         friendCount,
         friendAddRate,
@@ -491,10 +508,11 @@ export async function getScenarioLabelMap(): Promise<Map<string, string>> {
 
 export type ScenarioDailyReportRow = {
   date: string; // YYYY-MM-DD (日本時間)
-  scenario: string; // シナリオ名。未設定は「(未設定)」、CSV等で手動追加した成果(流入経路と紐付かない)は「(インポート)」
+  scenario: string; // シナリオ名。未設定は「(未設定)」。CSV等で手動追加した成果も、流入経路名が一致すれば、その流入経路の値で集計する(一致しなければ「(未設定)」)
   pvCount: number | null; // 未入力の(日付, シナリオ)はnull
   impCount: number | null;
   clCount: number | null;
+  impRate: number | null; // パーセント(imp数 ÷ PV数)。imp数・PV数のいずれかが未インポート・未入力、もしくはPV数が0の場合はnull
   clRate: number | null;
   friendCount: number;
   friendAddRate: number | null;
@@ -552,7 +570,7 @@ export function buildScenarioDailyReport(
     .filter((c) => !c.hidden)
     .forEach((c) => {
       // 成果時点で最新だった流入経路(latestSourceId)を優先し、再クリックが無い場合はsourceIdにフォールバックする。
-      const scenario = c.kind === "auto" ? scenarioOf(c.latestSourceId ?? c.sourceId) : "(インポート)";
+      const scenario = scenarioOf(c.latestSourceId ?? c.sourceId);
       scenarios.add(scenario);
       const key = `${dateKeyJST(c.convertedAt)}__${scenario}`;
       cvCountByKey.set(key, (cvCountByKey.get(key) ?? 0) + 1);
@@ -580,6 +598,8 @@ export function buildScenarioDailyReport(
       const pvCount = metrics?.pvCount ?? dailyAdMetricsByDate.get(dateKey)?.pvCount ?? null;
       const impCount = metrics?.impCount ?? null;
       const clCount = metrics?.clCount ?? null;
+      const impRate =
+        impCount !== null && pvCount !== null && pvCount > 0 ? Math.round((impCount / pvCount) * 1000) / 10 : null;
       const clRate =
         clCount !== null && impCount !== null && impCount > 0 ? Math.round((clCount / impCount) * 1000) / 10 : null;
       const friendAddRate =
@@ -590,6 +610,7 @@ export function buildScenarioDailyReport(
         pvCount,
         impCount,
         clCount,
+        impRate,
         clRate,
         friendCount,
         friendAddRate,
@@ -617,10 +638,11 @@ export async function getExitPointLabelMap(): Promise<Map<string, string>> {
 
 export type ExitPointDailyReportRow = {
   date: string; // YYYY-MM-DD (日本時間)
-  exitPoint: string; // 離脱地点名。未設定は「(未設定)」、CSV等で手動追加した成果(流入経路と紐付かない)は「(インポート)」
+  exitPoint: string; // 離脱地点名。未設定は「(未設定)」。CSV等で手動追加した成果も、流入経路名が一致すれば、その流入経路の値で集計する(一致しなければ「(未設定)」)
   pvCount: number | null; // 未インポート・未入力の(日付, 離脱地点)はnull
   impCount: number | null;
   clCount: number | null;
+  impRate: number | null; // パーセント(imp数 ÷ PV数)。imp数・PV数のいずれかが未インポート・未入力、もしくはPV数が0の場合はnull
   clRate: number | null;
   friendCount: number;
   friendAddRate: number | null;
@@ -678,7 +700,7 @@ export function buildExitPointDailyReport(
     .filter((c) => !c.hidden)
     .forEach((c) => {
       // 成果時点で最新だった流入経路(latestSourceId)を優先し、再クリックが無い場合はsourceIdにフォールバックする。
-      const exitPoint = c.kind === "auto" ? exitPointOf(c.latestSourceId ?? c.sourceId) : "(インポート)";
+      const exitPoint = exitPointOf(c.latestSourceId ?? c.sourceId);
       exitPoints.add(exitPoint);
       const key = `${dateKeyJST(c.convertedAt)}__${exitPoint}`;
       cvCountByKey.set(key, (cvCountByKey.get(key) ?? 0) + 1);
@@ -706,6 +728,8 @@ export function buildExitPointDailyReport(
       const pvCount = metrics?.pvCount ?? dailyAdMetricsByDate.get(dateKey)?.pvCount ?? null;
       const impCount = metrics?.impCount ?? null;
       const clCount = metrics?.clCount ?? null;
+      const impRate =
+        impCount !== null && pvCount !== null && pvCount > 0 ? Math.round((impCount / pvCount) * 1000) / 10 : null;
       const clRate =
         clCount !== null && impCount !== null && impCount > 0 ? Math.round((clCount / impCount) * 1000) / 10 : null;
       const friendAddRate =
@@ -716,6 +740,7 @@ export function buildExitPointDailyReport(
         pvCount,
         impCount,
         clCount,
+        impRate,
         clRate,
         friendCount,
         friendAddRate,
@@ -743,10 +768,11 @@ export async function getAppealLabelMap(): Promise<Map<string, string>> {
 
 export type AppealDailyReportRow = {
   date: string; // YYYY-MM-DD (日本時間)
-  appeal: string; // 訴求名。未設定は「(未設定)」、CSV等で手動追加した成果(流入経路と紐付かない)は「(インポート)」
+  appeal: string; // 訴求名。未設定は「(未設定)」。CSV等で手動追加した成果も、流入経路名が一致すれば、その流入経路の値で集計する(一致しなければ「(未設定)」)
   pvCount: number | null; // 未インポート・未入力の(日付, 訴求)はnull
   impCount: number | null;
   clCount: number | null;
+  impRate: number | null; // パーセント(imp数 ÷ PV数)。imp数・PV数のいずれかが未インポート・未入力、もしくはPV数が0の場合はnull
   clRate: number | null;
   friendCount: number;
   friendAddRate: number | null;
@@ -802,7 +828,7 @@ export function buildAppealDailyReport(
     .filter((c) => !c.hidden)
     .forEach((c) => {
       // 成果時点で最新だった流入経路(latestSourceId)を優先し、再クリックが無い場合はsourceIdにフォールバックする。
-      const appeal = c.kind === "auto" ? appealOf(c.latestSourceId ?? c.sourceId) : "(インポート)";
+      const appeal = appealOf(c.latestSourceId ?? c.sourceId);
       appeals.add(appeal);
       const key = `${dateKeyJST(c.convertedAt)}__${appeal}`;
       cvCountByKey.set(key, (cvCountByKey.get(key) ?? 0) + 1);
@@ -830,6 +856,8 @@ export function buildAppealDailyReport(
       const pvCount = metrics?.pvCount ?? null;
       const impCount = metrics?.impCount ?? null;
       const clCount = metrics?.clCount ?? null;
+      const impRate =
+        impCount !== null && pvCount !== null && pvCount > 0 ? Math.round((impCount / pvCount) * 1000) / 10 : null;
       const clRate =
         clCount !== null && impCount !== null && impCount > 0 ? Math.round((clCount / impCount) * 1000) / 10 : null;
       const friendAddRate =
@@ -840,6 +868,7 @@ export function buildAppealDailyReport(
         pvCount,
         impCount,
         clCount,
+        impRate,
         clRate,
         friendCount,
         friendAddRate,
@@ -892,7 +921,7 @@ async function activeLabelsFromFriendsAndCv(
   friends.forEach((f) => active.add(labelOf(f.sourceId)));
   cvEntries
     .filter((c) => !c.hidden)
-    .forEach((c) => active.add(c.kind === "auto" ? labelOf(c.latestSourceId ?? c.sourceId) : "(インポート)"));
+    .forEach((c) => active.add(labelOf(c.latestSourceId ?? c.sourceId)));
   return active;
 }
 

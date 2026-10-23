@@ -183,8 +183,8 @@ export function buildComboMonthlyReport(
     .filter((c) => !c.hidden)
     .forEach((c) => {
       // 成果時点で最新だった流入経路(latestSourceId)を優先し、再クリックが無い場合はsourceIdにフォールバックする。
-      // "import"(CSV等で手動追加した成果)は流入経路を持たないため「(インポート)」としてまとめる。
-      const label = c.kind === "auto" ? labelOf(c.latestSourceId ?? c.sourceId) : "(インポート)";
+      // CSV等で手動追加した成果も、流入経路名が登録済みの流入経路と一致すれば、そのsourceIdで集計される。
+      const label = labelOf(c.latestSourceId ?? c.sourceId);
       labels.add(label);
       const key = `${label}__${monthKeyOf(dateKeyJST(c.convertedAt))}`;
       cvCountByKey.set(key, (cvCountByKey.get(key) ?? 0) + 1);

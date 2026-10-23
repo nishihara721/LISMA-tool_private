@@ -32,6 +32,7 @@ type SectionDef = {
   field: string; // APIの各行で名前が入っているフィールド名
   header: string; // 表の左端の見出し
   csvName: string;
+  withImpRate?: boolean; // imp率の列を付けるか(月別合計のみ。他の表は組み合わせごとにPV数が分かれないため付けない)
 };
 
 const SECTIONS: SectionDef[] = [
@@ -41,6 +42,7 @@ const SECTIONS: SectionDef[] = [
     field: "month",
     header: "月",
     csvName: "月別合計",
+    withImpRate: true,
   },
   {
     key: "popup",
@@ -65,7 +67,7 @@ const SECTIONS: SectionDef[] = [
   },
 ];
 
-const METRIC_HEADERS = ["PV数", "imp数", "CL数", "CL率", "友だち追加", "追加率", "CV数", "CVR", "請求額"];
+const METRIC_HEADERS = ["PV数", "imp数", "imp率", "CL数", "CL率", "友だち追加", "追加率", "CV数", "CVR", "請求額"];
 const num = (v: number | null) => (v === null ? "-" : String(v));
 const pct = (v: number | null) => (v === null ? "-" : `${v}%`);
 
@@ -73,6 +75,7 @@ type TotalRow = {
   name: string;
   pv: number | null;
   imp: number | null;
+  impRate: number | null;
   cl: number | null;
   clRate: number | null;
   friend: number;
@@ -92,7 +95,7 @@ function buildTotals(rows: ApiRow[], field: string): TotalRow[] {
     const own = rows.filter((r) => String(r[field]) === name);
     const t = summarizeAdFunnelRows(own);
     if ((t.imp ?? 0) > 0 || (t.cl ?? 0) > 0 || t.friend > 0 || t.cv > 0) {
-      result.push({ name, pv: t.pv, imp: t.imp, cl: t.cl, clRate: t.clRate, friend: t.friend, friendAddRate: t.friendAddRate, cv: t.cv, cvr: t.cvr, billing: t.billing });
+      result.push({ name, pv: t.pv, imp: t.imp, impRate: t.impRate, cl: t.cl, clRate: t.clRate, friend: t.friend, friendAddRate: t.friendAddRate, cv: t.cv, cvr: t.cvr, billing: t.billing });
     }
   });
   return result;
@@ -101,15 +104,15 @@ function buildTotals(rows: ApiRow[], field: string): TotalRow[] {
 // 月別合計: 稼働の有無に関わらず表示期間の全ての月を並べ、複数月の場合は最下行に期間全体の合計を付ける
 function buildMonthlyTotals(rows: ApiRow[]): TotalRow[] {
   const toRow = (name: string, t: ReturnType<typeof summarizeAdFunnelRows>, isTotal = false): TotalRow => ({
-    name, pv: t.pv, imp: t.imp, cl: t.cl, clRate: t.clRate, friend: t.friend, friendAddRate: t.friendAddRate, cv: t.cv, cvr: t.cvr, billing: t.billing, isTotal,
+    name, pv: t.pv, imp: t.imp, impRate: t.impRate, cl: t.cl, clRate: t.clRate, friend: t.friend, friendAddRate: t.friendAddRate, cv: t.cv, cvr: t.cvr, billing: t.billing, isTotal,
   });
   const result = rows.map((r) => toRow(formatMonthLabel(r.month), summarizeAdFunnelRows([r])));
   if (rows.length > 1) result.push(toRow("合計", summarizeAdFunnelRows(rows), true));
   return result;
 }
 
-function cells(r: TotalRow): string[] {
-  return [num(r.pv), num(r.imp), num(r.cl), pct(r.clRate), String(r.friend), pct(r.friendAddRate), String(r.cv), pct(r.cvr), formatYen(r.billing)];
+function cells(r: TotalRow, withImpRate: boolean): string[] {
+  return [num(r.pv), num(r.imp), ...(withImpRate ? [pct(r.impRate)] : []), num(r.cl), pct(r.clRate), String(r.friend), pct(r.friendAddRate), String(r.cv), pct(r.cvr), formatYen(r.billing)];
 }
 
 export default function MonthlySummaryPage() {
@@ -146,10 +149,10 @@ export default function MonthlySummaryPage() {
 
   function downloadCsv(sec: SectionDef) {
     const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-    const header = [sec.header, "PV数", "imp数", "CL数", "CL率(%)", "友だち追加数", "友だち追加率(%)", "CV数", "CVR(%)", "請求額(円)"].map(escape).join(",");
+    const header = [sec.header, "PV数", "imp数", ...(sec.withImpRate ? ["imp率(%)"] : []), "CL数", "CL率(%)", "友だち追加数", "友だち追加率(%)", "CV数", "CVR(%)", "請求額(円)"].map(escape).join(",");
     const plain = (v: number | null) => (v === null ? "-" : String(v));
     const lines = (data[sec.key] ?? []).map((r) =>
-      [r.name, plain(r.pv), plain(r.imp), plain(r.cl), plain(r.clRate), String(r.friend), plain(r.friendAddRate), String(r.cv), plain(r.cvr), String(r.billing)]
+      [r.name, plain(r.pv), plain(r.imp), ...(sec.withImpRate ? [plain(r.impRate)] : []), plain(r.cl), plain(r.clRate), String(r.friend), plain(r.friendAddRate), String(r.cv), plain(r.cvr), String(r.billing)]
         .map(escape)
         .join(",")
     );
@@ -228,7 +231,7 @@ export default function MonthlySummaryPage() {
                     <thead>
                       <tr>
                         <th style={{ ...ui.th, position: "static", whiteSpace: "nowrap" }}>{sec.header}</th>
-                        {METRIC_HEADERS.map((h) => (
+                        {METRIC_HEADERS.filter((h) => sec.withImpRate || h !== "imp率").map((h) => (
                           <th key={h} style={{ ...ui.th, position: "static", textAlign: "right", whiteSpace: "nowrap" }}>
                             {h}
                           </th>
@@ -239,7 +242,7 @@ export default function MonthlySummaryPage() {
                       {items.map((r) => (
                         <tr key={r.name} style={r.isTotal ? { fontWeight: 700, background: "#f3f6f8" } : undefined}>
                           <td style={{ ...ui.compareTd, textAlign: "left", whiteSpace: "nowrap" }}>{r.name}</td>
-                          {cells(r).map((c, i) => (
+                          {cells(r, !!sec.withImpRate).map((c, i) => (
                             <td key={i} style={{ ...ui.compareTd, whiteSpace: "nowrap" }}>
                               {c}
                             </td>

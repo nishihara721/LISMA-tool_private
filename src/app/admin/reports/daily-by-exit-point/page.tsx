@@ -14,6 +14,7 @@ type ExitPointDailyReportRow = {
   pvCount: number | null;
   impCount: number | null;
   clCount: number | null;
+  impRate: number | null;
   clRate: number | null;
   friendCount: number;
   friendAddRate: number | null;
@@ -26,6 +27,7 @@ type Totals = {
   pv: number | null;
   imp: number | null;
   cl: number | null;
+  impRate: number | null;
   clRate: number | null;
   friend: number;
   friendAddRate: number | null;
@@ -131,12 +133,13 @@ export default function DailyReportByExitPointPage() {
       ? subset.reduce((sum, r) => sum + (r.impCount ?? 0), 0)
       : null;
     const cl = subset.some((r) => r.clCount !== null) ? subset.reduce((sum, r) => sum + (r.clCount ?? 0), 0) : null;
+    const impRate = imp !== null && pv !== null && pv > 0 ? Math.round((imp / pv) * 1000) / 10 : null;
     const clRate = cl !== null && imp !== null && imp > 0 ? Math.round((cl / imp) * 1000) / 10 : null;
     const friend = subset.reduce((sum, r) => sum + r.friendCount, 0);
     const friendAddRate = cl !== null && cl > 0 ? Math.round((friend / cl) * 1000) / 10 : null;
     const cv = subset.reduce((sum, r) => sum + r.cvCount, 0);
     const billing = subset.reduce((sum, r) => sum + r.billingAmount, 0);
-    return { pv, imp, cl, clRate, friend, friendAddRate, cv, billing, cvr: friend > 0 ? Math.round((cv / friend) * 1000) / 10 : null };
+    return { pv, imp, impRate, cl, clRate, friend, friendAddRate, cv, billing, cvr: friend > 0 ? Math.round((cv / friend) * 1000) / 10 : null };
   }
 
   // 離脱地点ごとにグループ化し、それぞれ月ごとの総計行込みの表示用配列(displayItems)を作る。
@@ -163,6 +166,7 @@ export default function DailyReportByExitPointPage() {
       "日付",
       "PV数",
       "imp数",
+      "imp率(%)",
       "CL数",
       "CL率(%)",
       "友だち追加数",
@@ -183,6 +187,7 @@ export default function DailyReportByExitPointPage() {
             r.date,
             numOrDash(r.pvCount),
             numOrDash(r.impCount),
+            numOrDash(r.impRate),
             numOrDash(r.clCount),
             numOrDash(r.clRate),
             String(r.friendCount),
@@ -291,7 +296,7 @@ export default function DailyReportByExitPointPage() {
                 {visibleExitPoints.map((exitPoint) => (
                   <th
                     key={exitPoint}
-                    colSpan={10}
+                    colSpan={11}
                     style={activeExitPoints.has(exitPoint) ? { ...ui.compareGroupTh, ...ui.activeLabelText } : ui.compareGroupTh}
                   >
                     {exitPoint}
@@ -310,6 +315,9 @@ export default function DailyReportByExitPointPage() {
                     </th>
                     <th key={`${exitPoint}__imp`} style={{ ...ui.compareMetricTh, top: HEADER_ROW_HEIGHT }}>
                       imp数
+                    </th>
+                    <th key={`${exitPoint}__impRate`} style={{ ...ui.compareMetricTh, top: HEADER_ROW_HEIGHT }}>
+                      imp率
                     </th>
                     <th key={`${exitPoint}__cl`} style={{ ...ui.compareMetricTh, top: HEADER_ROW_HEIGHT }}>
                       CL数
@@ -366,6 +374,9 @@ export default function DailyReportByExitPointPage() {
                             </td>
                             <td key={`${exitPoint}__imp`} style={{ ...ui.compareTd, background: "#eef3f6", fontWeight: 600 }}>
                               {t.imp === null ? "-" : t.imp}
+                            </td>
+                            <td key={`${exitPoint}__impRate`} style={{ ...ui.compareTd, background: "#eef3f6", fontWeight: 600 }}>
+                              {t.impRate === null ? "-" : `${t.impRate}%`}
                             </td>
                             <td key={`${exitPoint}__cl`} style={{ ...ui.compareTd, background: "#eef3f6", fontWeight: 600 }}>
                               {t.cl === null ? "-" : t.cl}
@@ -428,6 +439,9 @@ export default function DailyReportByExitPointPage() {
                           </td>
                           <td key={`${exitPoint}__imp`} style={ui.compareTd}>
                             {r.impCount === null ? "-" : r.impCount}
+                          </td>
+                          <td key={`${exitPoint}__impRate`} style={ui.compareTd}>
+                            {r.impRate === null ? "-" : `${r.impRate}%`}
                           </td>
                           <td key={`${exitPoint}__cl`} style={ui.compareTd}>
                             {r.clCount === null ? "-" : r.clCount}
