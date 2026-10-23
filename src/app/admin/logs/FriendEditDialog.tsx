@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import * as ui from "../ui";
 
 export type FriendEditTarget = {
@@ -59,7 +59,14 @@ export default function FriendEditDialog({
     }
   }
 
-  const known = sources.some((s) => s.sourceId === target.sourceId) || target.sourceId === "direct";
+  // 選択肢: 「直接追加」+ 登録済みの流入経路。現在の値がどちらにも無い場合(削除済みの流入経路など)は、その値も選択肢に残す
+  const options = useMemo(() => {
+    const list = [{ sourceId: "direct", name: "直接追加" }, ...sources];
+    if (target.sourceId && !list.some((o) => o.sourceId === target.sourceId)) {
+      list.push({ sourceId: target.sourceId, name: `(現在の値: ${target.sourceId})` });
+    }
+    return list;
+  }, [sources, target.sourceId]);
 
   return (
     <div
@@ -75,15 +82,12 @@ export default function FriendEditDialog({
         <p style={{ fontSize: 13, margin: "0 0 14px" }}>{target.displayName}</p>
 
         <label style={ui.label}>友だち追加時の流入経路</label>
-        <select style={{ ...ui.input, maxWidth: "100%", marginBottom: 14 }} value={sourceId} onChange={(e) => setSourceId(e.target.value)} disabled={busy}>
-          <option value="direct">直接追加</option>
-          {!known && <option value={target.sourceId}>(現在の値: {target.sourceId})</option>}
-          {sources.map((s) => (
-            <option key={s.sourceId} value={s.sourceId}>
-              {s.name}
-            </option>
-          ))}
-        </select>
+        <SourcePicker
+          options={options}
+          value={sourceId}
+          onChange={setSourceId}
+          disabled={busy}
+        />
 
         <label style={ui.label}>友だち追加日時(日本時間)</label>
         {target.preExisting ? (
@@ -105,6 +109,84 @@ export default function FriendEditDialog({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// 流入経路名を検索して選ぶ入力欄。入力した文字を含む流入経路だけを一覧に出す(大文字小文字・全角半角の違いは区別しない)。
+// 一覧は枠の中でスクロールでき、1件だけに絞られた状態でEnterを押すとその流入経路を選ぶ。
+function SourcePicker({
+  options,
+  value,
+  onChange,
+  disabled,
+}: {
+  options: { sourceId: string; name: string }[];
+  value: string;
+  onChange: (sourceId: string) => void;
+  disabled: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const norm = (v: string) => v.normalize("NFKC").toLowerCase();
+  const q = norm(query.trim());
+  const visible = q ? options.filter((o) => norm(o.name).includes(q)) : options;
+  const current = options.find((o) => o.sourceId === value);
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <div style={{ fontSize: 13, marginBottom: 6 }}>
+        選択中:<strong>{current?.name ?? value}</strong>
+      </div>
+      <input
+        type="text"
+        placeholder="流入経路名で検索"
+        style={{ ...ui.input, maxWidth: "100%", marginBottom: 6 }}
+        value={query}
+        disabled={disabled}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault(); // Enterでダイアログが閉じたり送信されたりしないようにする
+            if (visible.length === 1) onChange(visible[0].sourceId);
+          }
+        }}
+      />
+      <div
+        role="listbox"
+        aria-label="流入経路"
+        style={{ maxHeight: 180, overflowY: "auto", border: "1px solid #d9dee3", borderRadius: 6, background: "#ffffff" }}
+      >
+        {visible.length === 0 && <div style={{ padding: "8px 10px", fontSize: 12.5, color: "#6b7280" }}>該当する流入経路がありません</div>}
+        {visible.map((o) => {
+          const selected = o.sourceId === value;
+          return (
+            <button
+              key={o.sourceId}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              disabled={disabled}
+              onClick={() => onChange(o.sourceId)}
+              style={{
+                display: "block",
+                width: "100%",
+                textAlign: "left",
+                padding: "7px 10px",
+                border: "none",
+                borderBottom: "1px solid #eef0f3",
+                background: selected ? "#e8f0fe" : "#ffffff",
+                fontWeight: selected ? 600 : 400,
+                fontSize: 13,
+                cursor: disabled ? "default" : "pointer",
+                wordBreak: "break-all",
+              }}
+            >
+              {o.name}
+            </button>
+          );
+        })}
+      </div>
+      {q && <p style={ui.hint}>{visible.length}件が見つかりました</p>}
     </div>
   );
 }
