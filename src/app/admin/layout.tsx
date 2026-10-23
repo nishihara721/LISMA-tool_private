@@ -34,7 +34,7 @@ function filterNavItems(
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // ミドルウェアで未ログインは/loginへリダイレクト済みだが、念のためここでも検証する(多層防御)。
-  const token = cookies().get(ADMIN_SESSION_COOKIE)?.value;
+  const token = (await cookies()).get(ADMIN_SESSION_COOKIE)?.value;
   const session = await verifySessionToken(token);
   if (!session) {
     redirect("/login");

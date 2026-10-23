@@ -12,8 +12,8 @@ import { chunk, getDocsByIds } from "./firestore-utils";
 import { getAllPurchaseLinks, getAllSources } from "./settings-cache";
 import type { ClickDoc, ConversionDoc, EventLogDoc, FriendDoc, PurchaseLinkDoc, SourceDoc } from "@/types";
 
-export type TableKind = "friends" | "purchase_clicks" | "conversions" | "source_link_clicks" | "event_logs";
-export const TABLE_KINDS: TableKind[] = ["friends", "purchase_clicks", "conversions", "source_link_clicks", "event_logs"];
+export type TableKind = "friends" | "purchase_clicks" | "conversions" | "source_link_clicks" | "event_logs" | "cv_log";
+export const TABLE_KINDS: TableKind[] = ["friends", "purchase_clicks", "conversions", "source_link_clicks", "event_logs", "cv_log"];
 
 export type FilterValue = { text?: string; values?: string[]; from?: string; to?: string };
 export type TableQuery = {
@@ -42,8 +42,13 @@ type Built = {
   dates: Record<string, number>; // 日時絞り込みの対象値(ミリ秒)
 };
 type Ctx = { sourceMap: Map<string, SourceDoc>; purchaseLinkMap: Map<string, PurchaseLinkDoc> };
+type Key = { ts: number; id: string };
+type Batch = { items: Item[]; exhausted: boolean; last: Key | null };
 type Def = {
   collection: string;
+  // 指定すると、通常の「1つのコレクションを読む」処理の代わりにこちらで読み込む(複数のコレクションを合わせて並べる画面用)。
+  // 並び順は (orderField 降順, ドキュメントID 降順)。cursor の次から最大 n 件(exhausted は「これ以降にデータが無い」)。
+  fetchBatch?: (cursor: Key | null, fromMs: number | undefined, toMs: number | undefined, n: number) => Promise<Batch>;
   orderField: string;
   primaryDateKey: string; // orderFieldに対応する絞り込みキー(Firestore側の範囲指定に使う)
   prefilter?: (data: DocumentData) => boolean;
@@ -97,6 +102,11 @@ const friends: Def = {
           source,
           addedAt: fmt(f.addedAt),
           preExisting: f.preExisting ? (f.addedAtEstimated ? "導入前(日時未確定)" : "導入前") : "-",
+          // 以下は画面には出さず、手動変更ダイアログ用の元の値(列の定義に無いキーは表示・CSVに出ない)
+          sourceId: f.sourceId ?? "",
+          addedAtMs: String(f.addedAt),
+          isPreExisting: f.preExisting ? "1" : "",
+          isEstimated: f.addedAtEstimated ? "1" : "",
           cvCount: "0",
           status,
         },
@@ -275,12 +285,104 @@ const eventLogs: Def = {
   },
 };
 
+// ---- 編集用成果ログ ----
+// 自動計測の成果(conversions)と、手動追加した成果(report_cv_entries の kind="import")を、成果日時の新しい順に1本の一覧にする。
+// 非表示の成果も含めて表示する(状態の列で見分ける)。非表示などの上書き情報は report_cv_entries にあり、成果のIDと同じIDで探す。
+const keyCmp = (a: Key, b: Key) => (a.ts !== b.ts ? b.ts - a.ts : a.id < b.id ? 1 : a.id > b.id ? -1 : 0); // 降順(新しい順)で前にくる方が負
+
+async function fetchCvLogBatch(cursor: Key | null, fromMs: number | undefined, toMs: number | undefined, n: number): Promise<Batch> {
+  const make = (col: string) => {
+    let query: Query = adminDb.collection(col);
+    if (fromMs !== undefined) query = query.where("convertedAt", ">=", fromMs);
+    if (toMs !== undefined) query = query.where("convertedAt", "<=", toMs);
+    query = query.orderBy("convertedAt", "desc").orderBy(FieldPath.documentId(), "desc");
+    if (cursor) query = query.startAfter(cursor.ts, cursor.id);
+    return query.limit(n).get();
+  };
+  const [convSnap, ovSnap] = await Promise.all([make("conversions"), make("report_cv_entries")]);
+  const keyOf = (d: { id: string; get(f: string): unknown }): Key => ({ ts: d.get("convertedAt") as number, id: d.id });
+  const convFull = convSnap.docs.length >= n;
+  const ovFull = ovSnap.docs.length >= n;
+  // 片方のコレクションがまだ続いている場合、そこから先の行は、もう片方に挟まるはずの行を取りこぼす恐れがあるため、
+  // 「読み込みが途切れた側の最後の行」までを今回の結果とする
+  const bounds: Key[] = [];
+  if (convFull) bounds.push(keyOf(convSnap.docs[convSnap.docs.length - 1]));
+  if (ovFull) bounds.push(keyOf(ovSnap.docs[ovSnap.docs.length - 1]));
+  const bound = bounds.length > 0 ? bounds.sort(keyCmp)[bounds.length - 1] : null; // 最も古い(後ろの)境界
+
+  const merged: (Item & { key: Key })[] = [];
+  convSnap.docs.forEach((d) => merged.push({ id: d.id, data: { ...d.data(), _src: "conversion" }, key: keyOf(d) }));
+  ovSnap.docs.forEach((d) => {
+    // 上書き情報のうち、手動追加の成果だけが一覧の行になる(自動計測の成果の非表示マークは、conversions側の行に反映する)
+    if (d.get("kind") === "import") merged.push({ id: d.id, data: { ...d.data(), _src: "import" }, key: keyOf(d) });
+  });
+  merged.sort((a, b) => keyCmp(a.key, b.key));
+  const safe = bound ? merged.filter((m) => keyCmp(m.key, bound) <= 0) : merged;
+  // 境界の行そのもの(上書きマーク等で行にならないことがある)も「ここまで読んだ」位置として使う
+  return { items: safe.map(({ id, data }) => ({ id, data })), exhausted: !convFull && !ovFull, last: bound ?? (safe.length ? safe[safe.length - 1].key : null) };
+}
+
+const cvLog: Def = {
+  collection: "conversions",
+  orderField: "convertedAt",
+  primaryDateKey: "convertedAt",
+  fetchBatch: fetchCvLogBatch,
+  async build(items, ctx) {
+    const autoItems = items.filter((i) => i.data._src === "conversion");
+    const [friendMap, overrideMap] = await Promise.all([
+      getDocsByIds<FriendDoc>(adminDb.collection("friends"), friendIdsOf(autoItems)),
+      getDocsByIds<{ hidden?: boolean }>(adminDb.collection("report_cv_entries"), autoItems.map((i) => i.id)),
+    ]);
+    return items.map(({ id, data }) => {
+      const isImport = data._src === "import";
+      const convertedAt = data.convertedAt as number;
+      const hidden = isImport ? data.hidden === true : overrideMap.get(id)?.hidden === true;
+      let friend = "-";
+      let source = "-";
+      let purchaseLink = "-";
+      let idNumber = "-";
+      if (isImport) {
+        source = (data.sourceName as string | undefined) || "-";
+        purchaseLink = (data.purchaseLinkName as string | undefined) || "-";
+      } else {
+        const c = data as ConversionDoc;
+        friend = c.userId ? displayNameOf(c.userId, friendMap) : "-";
+        idNumber = idNumberOf(c.userId, friendMap);
+        source = c.sourceId ? sourceNameOf(c.sourceId, ctx.sourceMap) : "-";
+        purchaseLink = ctx.purchaseLinkMap.get(c.purchaseLinkId)?.name ?? c.purchaseLinkId ?? "-";
+      }
+      const kind = isImport ? "インポート" : "自動計測";
+      const status = hidden ? "非表示" : "表示中";
+      const note = (data.note as string | undefined) ?? "";
+      return {
+        id,
+        sortTs: convertedAt,
+        cells: {
+          convertedAt: fmt(convertedAt),
+          idNumber,
+          friend,
+          source,
+          purchaseLink,
+          note,
+          kind,
+          status,
+          rowId: id,
+          isHidden: hidden ? "1" : "", // 画面での行の薄い表示用(列の定義に無いキーは表示・CSVに出ない)
+        },
+        values: { userName: friend, source, purchaseLink, kind, status },
+        dates: { convertedAt },
+      };
+    });
+  },
+};
+
 const DEFS: Record<TableKind, Def> = {
   friends,
   purchase_clicks: purchaseClicks,
   conversions,
   source_link_clicks: sourceLinkClicks,
   event_logs: eventLogs,
+  cv_log: cvLog,
 };
 
 function hasContent(f: FilterValue | undefined): f is FilterValue {
@@ -329,22 +431,33 @@ export async function queryTable(q: TableQuery): Promise<TableResult> {
   const needsScan = !!def.prefilter || postFilters.length > 0;
   const batchSize = needsScan ? SCAN_BATCH : q.pageSize + 1;
 
-  let cursor = parseCursor(q.cursor);
+  let cursor: Key | null = parseCursor(q.cursor);
   const out: Built[] = [];
   let scanned = 0;
   let nextCursor: string | null = null;
   let hasMore = false;
 
   for (;;) {
-    let query: Query = adminDb.collection(def.collection);
-    if (fromMs !== undefined) query = query.where(def.orderField, ">=", fromMs);
-    if (toMs !== undefined) query = query.where(def.orderField, "<=", toMs);
-    query = query.orderBy(def.orderField, "desc").orderBy(FieldPath.documentId(), "desc");
-    if (cursor) query = query.startAfter(cursor.ts, cursor.id);
-
-    const snap = await query.limit(batchSize).get();
-    const items: Item[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
-    scanned += items.length;
+    let batch: Batch;
+    if (def.fetchBatch) {
+      batch = await def.fetchBatch(cursor, fromMs, toMs, batchSize);
+    } else {
+      let query: Query = adminDb.collection(def.collection);
+      if (fromMs !== undefined) query = query.where(def.orderField, ">=", fromMs);
+      if (toMs !== undefined) query = query.where(def.orderField, "<=", toMs);
+      query = query.orderBy(def.orderField, "desc").orderBy(FieldPath.documentId(), "desc");
+      if (cursor) query = query.startAfter(cursor.ts, cursor.id);
+      const snap = await query.limit(batchSize).get();
+      const docs: Item[] = snap.docs.map((d) => ({ id: d.id, data: d.data() }));
+      const lastDoc = docs[docs.length - 1];
+      batch = {
+        items: docs,
+        exhausted: docs.length < batchSize,
+        last: lastDoc ? { ts: lastDoc.data[def.orderField] as number, id: lastDoc.id } : null,
+      };
+    }
+    const items = batch.items;
+    scanned += Math.max(items.length, 1);
 
     const candidates = def.prefilter ? items.filter((i) => def.prefilter!(i.data)) : items;
     const built = (await def.build(candidates, ctx)).filter((r) => matches(r, postFilters));
@@ -360,13 +473,12 @@ export async function queryTable(q: TableQuery): Promise<TableResult> {
     }
     out.push(...built);
 
-    if (items.length < batchSize) {
+    if (batch.exhausted || !batch.last) {
       nextCursor = null;
       hasMore = false;
       break;
     }
-    const lastItem = items[items.length - 1];
-    cursor = { ts: lastItem.data[def.orderField] as number, id: lastItem.id };
+    cursor = batch.last;
     nextCursor = cursorOf(cursor.ts, cursor.id);
     if (out.length >= q.pageSize || scanned >= SCAN_CAP) {
       hasMore = true;

@@ -7,7 +7,7 @@ import type { SourceDoc } from "@/types";
 
 export const maxDuration = 60;
 
-// 流入経路の一括登録(CSV/Excelの取り込み)。1回の取り込みの上限はBULK_MAX_ROWS件。
+// 流入経路の一括登録(CSVの取り込み)。1回の取り込みの上限はBULK_MAX_ROWS件。
 // 名前は構成要素から自動生成し(1件ずつの登録と同じ規則)、すでに登録済みの名前、およびファイル内で重複する名前は登録しない。
 // body: { rows: { placement, appeal, popup, scenario, exitPoint, intermediatePage, other, lstepUrl }[], check?: boolean }
 //   check:true の場合は登録せず、登録される件数・スキップされる件数だけを返す(実行前の確認用)。

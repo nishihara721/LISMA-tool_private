@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import * as ui from "../ui";
-import { SPREADSHEET_ACCEPT, parseSpreadsheetFile } from "@/lib/csv-client";
+import { CSV_ACCEPT, parseCsvFile } from "@/lib/csv-client";
 
-// 流入経路の一括登録(CSV/Excelの取り込み)。
+// 流入経路の一括登録(CSVの取り込み)。
 // 列の並び: 設置先、訴求、ポップアップ、シナリオ、離脱地点、中間ページ、その他、Lステップ流入経路リンク
 // (1行目が見出し行の場合は読み飛ばす。名前は構成要素から自動生成する)
 const KEYS = ["placement", "appeal", "popup", "scenario", "exitPoint", "intermediatePage", "other", "lstepUrl"] as const;
@@ -14,6 +14,7 @@ type Row = Partial<Record<(typeof KEYS)[number], string>>;
 type Summary = { total: number; create: number; duplicate: number; empty: number; invalidUrl: number };
 
 export default function SourceImportPanel({ onImported }: { onImported: () => void }) {
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [rows, setRows] = useState<Row[] | null>(null);
   const [fileName, setFileName] = useState("");
@@ -28,7 +29,7 @@ export default function SourceImportPanel({ onImported }: { onImported: () => vo
     setMessage("");
     setError("");
     try {
-      let table = await parseSpreadsheetFile(file);
+      let table = await parseCsvFile(file);
       // 1行目が見出し行(「設置先」。旧名称の「設置場所」も可)なら読み飛ばす
       if (table.length > 0 && ["設置先", "設置場所"].includes((table[0][0] ?? "").replace(/\s/g, ""))) table = table.slice(1);
       const parsed: Row[] = table
@@ -83,12 +84,24 @@ export default function SourceImportPanel({ onImported }: { onImported: () => vo
     }
   }
 
+  // 一覧が見えにくくならないよう、普段は閉じておく(閉じている間も入力途中の状態は保持するため、非表示にするだけ)
   return (
+    <div style={{ marginBottom: 14 }}>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{ ...ui.buttonSmall, display: "inline-flex", alignItems: "center", gap: 6 }}
+      >
+        <span aria-hidden>{open ? "▼" : "▶"}</span>
+        流入経路の一括登録(CSV)
+      </button>
+      <div style={{ display: open ? "block" : "none", marginTop: 12 }}>
     <div style={{ ...ui.section, marginBottom: 20 }}>
       <h2 style={ui.h2}>流入経路の一括登録</h2>
       <input
         type="file"
-        accept={SPREADSHEET_ACCEPT}
+        accept={CSV_ACCEPT}
         disabled={busy}
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -111,6 +124,8 @@ export default function SourceImportPanel({ onImported }: { onImported: () => vo
       {busy && <p style={{ fontSize: 12.5, marginTop: 8 }}>処理中…</p>}
       {message && <p style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>{message}</p>}
       {error && <p style={{ fontSize: 12.5, marginTop: 8, color: "#c0392b" }}>{error}</p>}
+    </div>
+      </div>
     </div>
   );
 }

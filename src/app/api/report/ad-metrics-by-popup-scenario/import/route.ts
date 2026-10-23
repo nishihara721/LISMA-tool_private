@@ -3,7 +3,7 @@ import { invalidateReportCache } from "@/lib/report-cache";
 import { adminDb } from "@/lib/firebase-admin";
 import type { DailyPopupScenarioAdMetricsDoc } from "@/types";
 
-// Flipdesk等からエクスポートしたCSV/Excel(シナリオ・日付ごとの行)から、
+// Flipdesk等からエクスポートしたCSV(シナリオ・日付ごとの行)から、
 // 「シナリオ」列(命名規則付きの名前)と「グループ」列(A/B/-)を使って「ポップアップ / シナリオ」を抽出し、
 // 日付・「ポップアップ / シナリオ」ごとに合算してからインポートする(抽出ロジックはsrc/lib/scenario-popup.ts)。
 // body側(クライアント)で日付・「ポップアップ / シナリオ」ごとの合計値まで計算済みのものを受け取る。

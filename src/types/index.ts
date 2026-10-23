@@ -161,12 +161,12 @@ export type DailyAdMetricsDoc = {
 
 // ポップアップ別日次レポート用のimp数・CL数。DailyAdMetricsDocとは別コレクションで、
 // 日付だけでなくポップアップ単位でも集計する(ドキュメントIDは`${date}__${popup}`)。
-// ポップアップ名は、インポート元Excelの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
+// ポップアップ名は、インポート元CSVの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
 // src/lib/scenario-popup.ts の extractPopupFromScenarioName() で抽出したもの。
 export type DailyPopupAdMetricsDoc = {
   date: string; // YYYY-MM-DD (日本時間)
   popup: string;
-  pvCount?: number; // そのポップアップのPV数(CSV/Excel取り込み、または画面からの手動入力・修正で設定)
+  pvCount?: number; // そのポップアップのPV数(CSV取り込み、または画面からの手動入力・修正で設定)
   impCount?: number; // 自動ポップアップ表示回数の合計(その日・そのポップアップの全シナリオ分を合算)
   clCount?: number; // ポップアップ内のクリック数の合計(その日・そのポップアップの全シナリオ分を合算)
   updatedAt: number;
@@ -174,7 +174,7 @@ export type DailyPopupAdMetricsDoc = {
 
 // シナリオ別日次レポート用のimp数・CL数。DailyPopupAdMetricsDocと同じ考え方で、
 // 日付だけでなくシナリオ単位でも集計する(ドキュメントIDは`${date}__${scenario}`)。
-// シナリオ名は、インポート元Excelの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
+// シナリオ名は、インポート元CSVの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
 // src/lib/scenario-popup.ts の extractScenarioFromScenarioName() で抽出したもの
 // (流入経路の「シナリオ」構成要素の値であり、命名規則の元になった「シナリオ」列自体とは別物)。
 export type DailyScenarioAdMetricsDoc = {
@@ -188,12 +188,12 @@ export type DailyScenarioAdMetricsDoc = {
 
 // 離脱地点別日次レポート用のimp数・CL数。DailyPopupAdMetricsDoc・DailyScenarioAdMetricsDocと同じ考え方で、
 // 日付だけでなく離脱地点単位でも集計する(ドキュメントIDは`${date}__${exitPoint}`)。
-// 離脱地点名は、インポート元Excelの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
+// 離脱地点名は、インポート元CSVの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
 // src/lib/scenario-popup.ts の extractExitPointFromScenarioName() で抽出したもの。
 export type DailyExitPointAdMetricsDoc = {
   date: string; // YYYY-MM-DD (日本時間)
   exitPoint: string;
-  pvCount?: number; // その離脱地点のPV数(CSV/Excel取り込み、または画面からの手動入力・修正で設定)
+  pvCount?: number; // その離脱地点のPV数(CSV取り込み、または画面からの手動入力・修正で設定)
   impCount?: number;
   clCount?: number;
   updatedAt: number;
@@ -201,12 +201,12 @@ export type DailyExitPointAdMetricsDoc = {
 
 // 訴求別日次レポート用のimp数・CL数。DailyPopupAdMetricsDoc等と同じ考え方で、
 // 日付だけでなく訴求単位でも集計する(ドキュメントIDは`${date}__${appeal}`)。
-// 訴求名は、インポート元Excelの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
+// 訴求名は、インポート元CSVの「シナリオ」列(構成要素をまとめた名前)と「グループ」列(A/B/-)から
 // src/lib/scenario-popup.ts の extractAppealFromScenarioName() で抽出したもの。
 export type DailyAppealAdMetricsDoc = {
   date: string; // YYYY-MM-DD (日本時間)
   appeal: string;
-  pvCount?: number; // その訴求のPV数(訴求ごとの列を持つCSV/Excelの取り込み、または画面からの手動入力・修正で設定)
+  pvCount?: number; // その訴求のPV数(訴求ごとの列を持つCSVの取り込み、または画面からの手動入力・修正で設定)
   impCount?: number;
   clCount?: number;
   updatedAt: number;
@@ -214,7 +214,7 @@ export type DailyAppealAdMetricsDoc = {
 
 // 設置先×訴求×離脱地点×ポップアップ×シナリオ×中間別月次レポート用のimp数・CL数。
 // DailyPopupAdMetricsDoc等と同じ考え方で、日付×「流入経路の名前」単位で集計する(ドキュメントIDは`${date}__${sourceName}`)。
-// 流入経路の名前(sourceName)は、インポート元Excelの「シナリオ」列(命名規則付きの名前)と「グループ」列(A/B/-)から
+// 流入経路の名前(sourceName)は、インポート元CSVの「シナリオ」列(命名規則付きの名前)と「グループ」列(A/B/-)から
 // src/lib/scenario-popup.ts の extractSourceNameFromScenarioName() で6要素を取り出し、
 // src/lib/source-name.ts の buildSourceName() と同じ「_」区切りで結合したもの(sources.nameと突き合わせられる)。
 // この組み合わせ単位のPV数は取り込み元が無いため持たない(月次レポートでは日次の合計PV数を使う)。
@@ -227,7 +227,7 @@ export type DailySourceAdMetricsDoc = {
 };
 
 // ポップアップ×シナリオ別月次レポート用のimp数・CL数。日付×「ポップアップ / シナリオ」のラベル単位で集計する
-// (ドキュメントIDは`${date}__${label}`)。ラベルは、インポート元Excelの「シナリオ」列(命名規則付きの名前)と
+// (ドキュメントIDは`${date}__${label}`)。ラベルは、インポート元CSVの「シナリオ」列(命名規則付きの名前)と
 // 「グループ」列(A/B/-)から src/lib/scenario-popup.ts の extractPopupScenarioLabelFromScenarioName() で作る
 // (getPopupScenarioLabelMap()と同じ「ポップアップ / シナリオ」形式。どちらかが読み取れない側は「(未設定)」)。
 // この組み合わせ単位のPV数は取り込み元が無いため持たない(月次レポートでは日次の合計PV数を使う)。

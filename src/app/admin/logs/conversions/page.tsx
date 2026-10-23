@@ -19,7 +19,7 @@ const COLUMNS: Column[] = [
 
 export default async function ConversionsLogPage() {
   // レポート閲覧権限のユーザーには、友だち名の列とユーザー名での絞り込みを表示しない
-  const session = await verifySessionToken(cookies().get(ADMIN_SESSION_COOKIE)?.value);
+  const session = await verifySessionToken((await cookies()).get(ADMIN_SESSION_COOKIE)?.value);
   const hideFriendName = session?.role !== "admin";
   const [sourceOptions, purchaseLinkOptions] = await Promise.all([getSourceNameOptions(), getPurchaseLinkNameOptions()]);
 

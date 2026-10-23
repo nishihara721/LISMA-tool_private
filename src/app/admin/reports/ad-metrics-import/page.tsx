@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import * as ui from "../../ui";
-import { SPREADSHEET_ACCEPT, parseSpreadsheetFile } from "@/lib/csv-client";
+import { CSV_ACCEPT, parseCsvFile } from "@/lib/csv-client";
 import { parseAdMetricsRows } from "@/lib/ad-metrics-import";
 import { parseAppealPvRows, parsePvRows } from "@/lib/pv-import";
 
-// imp数・CL数のCSV/Excel取り込み専用ページ。
+// imp数・CL数のCSV取り込み専用ページ。
 // 「日次レポート」「ポップアップ別日次レポート」「シナリオ別日次レポート」「離脱地点別日次レポート」
 // 「訴求別日次レポート」それぞれに取り込み口があると分かりにくいため、取り込みはこのページに一本化し、
 // 1回の取り込みで5つのレポート(および月次のポップアップ×シナリオ別・設置先×訴求×…別レポート)すべてに反映する。
@@ -29,7 +29,7 @@ export default function AdMetricsImportPage() {
     setResultMessage("");
     setErrorMessage("");
     try {
-      const csvRows = await parseSpreadsheetFile(file);
+      const csvRows = await parseCsvFile(file);
       const parsed = parseAdMetricsRows(csvRows);
       if ("error" in parsed) {
         setErrorMessage(parsed.error);
@@ -158,7 +158,7 @@ export default function AdMetricsImportPage() {
     setPvResultMessage("");
     setPvErrorMessage("");
     try {
-      const csvRows = await parseSpreadsheetFile(file);
+      const csvRows = await parseCsvFile(file);
       const parsed = parsePvRows(csvRows);
       if ("error" in parsed) {
         setPvErrorMessage(parsed.error);
@@ -189,7 +189,7 @@ export default function AdMetricsImportPage() {
     setAppealPvResultMessage("");
     setAppealPvErrorMessage("");
     try {
-      const csvRows = await parseSpreadsheetFile(file);
+      const csvRows = await parseCsvFile(file);
       const parsed = parseAppealPvRows(csvRows);
       if ("error" in parsed) {
         setAppealPvErrorMessage(parsed.error);
@@ -223,7 +223,7 @@ export default function AdMetricsImportPage() {
         <h2 style={ui.h2}>フリップデスクデータ</h2>
         <input
           type="file"
-          accept={SPREADSHEET_ACCEPT}
+          accept={CSV_ACCEPT}
           disabled={busy}
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -240,7 +240,7 @@ export default function AdMetricsImportPage() {
         <h2 style={ui.h2}>PV数</h2>
         <input
           type="file"
-          accept={SPREADSHEET_ACCEPT}
+          accept={CSV_ACCEPT}
           disabled={pvBusy}
           onChange={(e) => {
             const file = e.target.files?.[0];
@@ -257,7 +257,7 @@ export default function AdMetricsImportPage() {
         <h2 style={ui.h2}>訴求別PV数</h2>
         <input
           type="file"
-          accept={SPREADSHEET_ACCEPT}
+          accept={CSV_ACCEPT}
           disabled={appealPvBusy}
           onChange={(e) => {
             const file = e.target.files?.[0];

@@ -5,7 +5,7 @@ import { adminDb } from "@/lib/firebase-admin";
 import { MEMO_MAX_LENGTH } from "@/lib/memo-links";
 
 // 日次レポート画面上でのPV数・imp数・CL数の手動編集(1日分)。
-// CSV/Excel取り込みでは埋まらないPV数の入力、および取り込んだimp数・CL数の修正に使う。
+// CSV取り込みでは埋まらないPV数の入力、および取り込んだimp数・CL数の修正に使う。
 //
 // body: { pvCount?: number | null, impCount?: number | null, clCount?: number | null, memo?: string | null }
 // 値がnumberならその値を設定し、nullなら該当フィールドを削除(未入力状態に戻す)する。

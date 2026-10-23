@@ -2,24 +2,30 @@
 
 import { useState } from "react";
 import * as ui from "./ui";
-import { SPREADSHEET_ACCEPT, parseSpreadsheetFile } from "@/lib/csv-client";
-import { parseLstepRows, type LstepImportRow } from "@/lib/lstep-import";
-import { LSTEP_IMPORT_MAX_FRIENDS, formatLstepPeriod, lstepImportRange } from "@/lib/lstep-period";
+import { CSV_ACCEPT, parseCsvFile } from "@/lib/csv-client";
+import { parseFriendImportRows, type FriendImportParsed } from "@/lib/lstep-import";
 
-// 「友だち一覧」画面の上部に置く、LステップのCSV/Excelを取り込んでのLステップナンバー付与パネル
-// (表示名が完全一致、かつ友だち追加日時が一致・もしくは最も近い友だちに突合する)。
-// なお「ID」(追加日時が古い順の連番)は新規の友だち追加時にWebhook側で自動採番されるのみで、
-// 既存の友だちへの一括付与はテスト時に一度きり実行すれば良いものだったため、この画面には置いていない。
-type Prepared = {
-  fileName: string;
-  rows: LstepImportRow[];
-  period: string; // 「2026/09/01〜09/30」の形式
-  friendCount: number | null; // 対象期間のこのツール側の友だち数(確認中はnull)
-  tooMany: boolean;
+type Result = {
+  matched: number;
+  notFound: number;
+  notFoundSample: number[];
+  duplicateId: number;
+  nameMismatch: number;
+  nameMismatchSample: string[];
+  addedAtSkippedNormal: number;
+  addedAtSkippedFuture: number;
+  sourceUnmatched: number;
+  sourceUnmatchedSample: string[];
+  addedAtUpdated: number;
+  sourceUpdated: number;
+  lstepUpdated: number;
+  updatedFriends: number;
 };
 
-// 友だち一覧が画面の上の方で見えにくくならないよう、取り込みの2つのパネルは普段は閉じておき、
-// 見出しをクリックしたときだけ開く(閉じている間も入力途中の状態は保持するため、非表示にするだけで作り直さない)。
+// 「友だち一覧」画面の上部に置く、CSVでの友だち情報の一括更新パネル。
+// 見出し「ID」「表示名」「友だち追加日時」「流入経路名」「Lステップナンバー」のファイルを取り込み、
+// IDが一致する友だちの、ファイルに値がある項目だけを更新する。
+// 友だち一覧が見えにくくならないよう、普段は閉じておく(閉じている間も入力途中の状態は保持するため、非表示にするだけ)。
 export default function FriendToolsPanel() {
   const [open, setOpen] = useState(false);
   return (
@@ -31,186 +37,52 @@ export default function FriendToolsPanel() {
         style={{ ...ui.buttonSmall, display: "inline-flex", alignItems: "center", gap: 6 }}
       >
         <span aria-hidden>{open ? "▼" : "▶"}</span>
-        データの取り込み(Lステップナンバー・導入前の友だち)
+        友だち情報の一括更新(CSV)
       </button>
       <div style={{ display: open ? "block" : "none", marginTop: 12 }}>
-        <LstepNumberPanel />
-        <EstimatedAddedAtPanel />
+        <BulkUpdatePanel />
       </div>
     </div>
   );
 }
 
-function LstepNumberPanel() {
+function BulkUpdatePanel() {
   const [busy, setBusy] = useState(false);
-  const [prepared, setPrepared] = useState<Prepared | null>(null);
-  const [lstepMessage, setLstepMessage] = useState("");
-  const [lstepError, setLstepError] = useState("");
-
-  // 1. ファイルを読み込み、CSVの追加日時の最小〜最大から対象期間を出す(この時点では取り込まない)
-  async function handleSelectFile(file: File) {
-    setBusy(true);
-    setPrepared(null);
-    setLstepMessage("");
-    setLstepError("");
-    try {
-      const csvRows = await parseSpreadsheetFile(file);
-      const parsed = parseLstepRows(csvRows);
-      if ("error" in parsed) {
-        setLstepError(parsed.error);
-        return;
-      }
-      if (parsed.length === 0) {
-        setLstepError("有効な行が見つかりませんでした");
-        return;
-      }
-      const { minAt, maxAt } = lstepImportRange(parsed.map((r) => r.addedAt));
-      const next: Prepared = {
-        fileName: file.name,
-        rows: parsed,
-        period: formatLstepPeriod(minAt, maxAt),
-        friendCount: null,
-        tooMany: false,
-      };
-      setPrepared(next);
-
-      // 対象期間の友だち数を確認する(読み込みはせず、件数だけを数える)
-      const res = await fetch("/api/admin/friends/import-lstep-numbers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: parsed, check: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (res.ok) {
-        setPrepared({ ...next, friendCount: data.friendCount });
-      } else if (data.code === "too_many_friends") {
-        setPrepared({ ...next, friendCount: data.friendCount, tooMany: true });
-      } else {
-        setLstepError(data.error ?? "対象期間の確認に失敗しました");
-        setPrepared(null);
-      }
-    } catch (e) {
-      setLstepError(`読み込みに失敗しました: ${e}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // 2. 取り込みを実行する(対象期間の友だちだけを読み込んで突合する)
-  async function handleExecute() {
-    if (!prepared || prepared.tooMany) return;
-    setBusy(true);
-    setLstepMessage("");
-    setLstepError("");
-    try {
-      const res = await fetch("/api/admin/friends/import-lstep-numbers", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: prepared.rows }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "取り込みに失敗しました");
-
-      const sample: { displayName: string }[] = data.unmatchedSample ?? [];
-      const sampleNote =
-        data.unmatched > 0 && sample.length > 0
-          ? `(未突合の例: ${sample.map((s) => s.displayName).join("、")}${data.unmatched > sample.length ? " ほか" : ""})`
-          : "";
-      setLstepMessage(
-        `対象期間：${prepared.period} / 付与できた件数：${data.matched}件 / 未突合：${data.unmatched}件${sampleNote}`
-      );
-      setPrepared(null);
-      // 一覧(LogTable)に、取り込み結果を反映させるための再読み込みを知らせる
-      window.dispatchEvent(new Event("lft:table-reload"));
-    } catch (e) {
-      setLstepError(`取り込みに失敗しました: ${e}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div style={{ ...ui.section, marginBottom: 20 }}>
-      <h2 style={ui.h2}>Lステップナンバーの取り込み</h2>
-
-      <div>
-        <input
-          type="file"
-          accept={SPREADSHEET_ACCEPT}
-          disabled={busy}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) handleSelectFile(file);
-            e.target.value = "";
-          }}
-        />
-        {prepared && (
-          <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.8 }}>
-            <div>
-              対象期間：<strong>{prepared.period}</strong>({prepared.rows.length}行)
-            </div>
-            {prepared.friendCount !== null && !prepared.tooMany && (
-              <div style={ui.hint}>期間内の友だち：{prepared.friendCount.toLocaleString()}人</div>
-            )}
-            {prepared.tooMany && (
-              <div style={{ color: "#c0392b" }}>
-                対象期間の友だちが{prepared.friendCount?.toLocaleString()}人います(上限{LSTEP_IMPORT_MAX_FRIENDS.toLocaleString()}人)。期間を分けて取り込んでください。
-              </div>
-            )}
-            <button
-              type="button"
-              style={{ ...ui.buttonSmall, marginTop: 6 }}
-              onClick={handleExecute}
-              disabled={busy || prepared.friendCount === null || prepared.tooMany}
-            >
-              取り込みを実行
-            </button>
-          </div>
-        )}
-        {busy && <p style={{ fontSize: 12.5, marginTop: 8 }}>処理中…</p>}
-        {lstepMessage && <p style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>{lstepMessage}</p>}
-        {lstepError && <p style={{ fontSize: 12.5, marginTop: 8, color: "#c0392b" }}>{lstepError}</p>}
-      </div>
-    </div>
-  );
-}
-
-// 導入前から友だちだった人(流入経路リンクを初めて踏んだときに自動登録された人)は、友だち一覧の「導入前」列に印が付く。
-// 追加日時は最初「リンクを踏んだ日時」の仮の値。LステップのCSVで、追加日時・流入経路を何度でも修正できる。
-function EstimatedAddedAtPanel() {
-  const [busy, setBusy] = useState(false);
-  const [rows, setRows] = useState<LstepImportRow[] | null>(null);
-  const [fileName, setFileName] = useState("");
-  const [estimatedCount, setEstimatedCount] = useState<number | null>(null);
-  const [message, setMessage] = useState("");
+  const [parsed, setParsed] = useState<(FriendImportParsed & { fileName: string }) | null>(null);
+  const [preview, setPreview] = useState<Result | null>(null);
+  const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState("");
 
+  async function post(rows: FriendImportParsed["rows"], check: boolean) {
+    const res = await fetch("/api/admin/friends/bulk-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rows, check }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error ?? "処理に失敗しました");
+    return data as Result;
+  }
+
+  // 1. ファイルを読み込み、IDの突合結果を確認する(この時点では更新しない)
   async function handleSelectFile(file: File) {
     setBusy(true);
-    setRows(null);
-    setEstimatedCount(null);
-    setMessage("");
+    setParsed(null);
+    setPreview(null);
+    setResult(null);
     setError("");
     try {
-      const parsed = parseLstepRows(await parseSpreadsheetFile(file));
-      if ("error" in parsed) {
-        setError(parsed.error);
+      const p = parseFriendImportRows(await parseCsvFile(file));
+      if ("error" in p) {
+        setError(p.error);
         return;
       }
-      if (parsed.length === 0) {
+      if (p.rows.length === 0) {
         setError("有効な行が見つかりませんでした");
         return;
       }
-      const res = await fetch("/api/admin/friends/update-added-at", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: parsed, check: true }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error ?? "確認に失敗しました");
-      setRows(parsed);
-      setFileName(file.name);
-      setEstimatedCount(data.preExistingCount);
+      setPreview(await post(p.rows, true));
+      setParsed({ ...p, fileName: file.name });
     } catch (e) {
       setError(`読み込みに失敗しました: ${e}`);
     } finally {
@@ -218,31 +90,16 @@ function EstimatedAddedAtPanel() {
     }
   }
 
+  // 2. 更新を実行する
   async function handleExecute() {
-    if (!rows) return;
+    if (!parsed) return;
     setBusy(true);
-    setMessage("");
     setError("");
     try {
-      const res = await fetch("/api/admin/friends/update-added-at", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "更新に失敗しました");
-      const sample: string[] = data.ambiguousSample ?? [];
-      const ambiguousNote =
-        data.ambiguous > 0
-          ? ` / 同名のため未更新：${data.ambiguous}人(${sample.join("、")}${data.ambiguous > sample.length ? " ほか" : ""})`
-          : "";
-      const sourceNote =
-        data.sourceUpdated > 0 || data.sourceUnmatched > 0
-          ? ` / 流入経路の更新：${data.sourceUpdated}件(名前が一致せず変更なし：${data.sourceUnmatched}件)`
-          : "";
-      setMessage(`更新できた件数：${data.updated}件${sourceNote}${ambiguousNote} / 日時が未確定の友だち：${data.remaining}人`);
-      setRows(null);
-      setEstimatedCount(null);
+      setResult(await post(parsed.rows, false));
+      setParsed(null);
+      setPreview(null);
+      // 一覧(LogTable)に反映させるための再読み込みを知らせる
       window.dispatchEvent(new Event("lft:table-reload"));
     } catch (e) {
       setError(`更新に失敗しました: ${e}`);
@@ -251,12 +108,24 @@ function EstimatedAddedAtPanel() {
     }
   }
 
+  const notes = (r: Result) => {
+    const list: string[] = [];
+    if (r.notFound > 0) list.push(`IDが見つからない：${r.notFound}件(${r.notFoundSample.join("、")}${r.notFound > r.notFoundSample.length ? " ほか" : ""})`);
+    if (r.duplicateId > 0) list.push(`同じIDの友だちが複数いて特定できない：${r.duplicateId}件`);
+    if (r.addedAtSkippedNormal > 0) list.push(`導入前ではないため追加日時は変更なし：${r.addedAtSkippedNormal}件`);
+    if (r.addedAtSkippedFuture > 0) list.push(`未来の日時のため追加日時は変更なし：${r.addedAtSkippedFuture}件`);
+    if (r.sourceUnmatched > 0)
+      list.push(`流入経路名が登録されておらず変更なし：${r.sourceUnmatched}件(${r.sourceUnmatchedSample.join("、")}${r.sourceUnmatched > r.sourceUnmatchedSample.length ? " ほか" : ""})`);
+    if (r.nameMismatch > 0) list.push(`表示名がIDの友だちと異なる：${r.nameMismatch}件(${r.nameMismatchSample.join("、")}${r.nameMismatch > r.nameMismatchSample.length ? " ほか" : ""})`);
+    return list;
+  };
+
   return (
     <div style={{ ...ui.section, marginBottom: 20 }}>
-      <h2 style={ui.h2}>導入前の友だちの追加日時・流入経路の更新</h2>
+      <h2 style={ui.h2}>友だち情報の一括更新</h2>
       <input
         type="file"
-        accept={SPREADSHEET_ACCEPT}
+        accept={CSV_ACCEPT}
         disabled={busy}
         onChange={(e) => {
           const file = e.target.files?.[0];
@@ -264,18 +133,44 @@ function EstimatedAddedAtPanel() {
           e.target.value = "";
         }}
       />
-      {rows && estimatedCount !== null && (
+      {parsed && preview && (
         <div style={{ marginTop: 10, fontSize: 13, lineHeight: 1.8 }}>
           <div>
-            {fileName}：{rows.length.toLocaleString()}行 / 導入前の友だち：<strong>{estimatedCount.toLocaleString()}人</strong>
+            {parsed.fileName}：{(parsed.rows.length + parsed.skipped).toLocaleString()}行 / IDが一致：<strong>{preview.matched.toLocaleString()}人</strong>
+            (更新される友だち：{preview.updatedFriends.toLocaleString()}人)
           </div>
-          <button type="button" style={{ ...ui.buttonSmall, marginTop: 6 }} onClick={handleExecute} disabled={busy || estimatedCount === 0}>
+          <div style={ui.hint}>
+            追加日時 {preview.addedAtUpdated.toLocaleString()}件 / 流入経路 {preview.sourceUpdated.toLocaleString()}件 / Lステップナンバー{" "}
+            {preview.lstepUpdated.toLocaleString()}件
+          </div>
+          {parsed.skipped > 0 && (
+            <div style={{ color: "#c0392b" }}>
+              IDまたは日時を読み取れず対象外の行：{parsed.skipped}行({parsed.skippedSample.join("、")}
+              {parsed.skipped > parsed.skippedSample.length ? " ほか" : ""})
+            </div>
+          )}
+          {parsed.duplicated > 0 && <div style={ui.hint}>同じIDが複数行あるため、最後の行を使います：{parsed.duplicated}件</div>}
+          {notes(preview).map((n) => (
+            <div key={n} style={{ color: "#c0392b" }}>
+              {n}
+            </div>
+          ))}
+          <button type="button" style={{ ...ui.buttonSmall, marginTop: 6 }} onClick={handleExecute} disabled={busy || preview.updatedFriends === 0}>
             更新を実行
           </button>
         </div>
       )}
       {busy && <p style={{ fontSize: 12.5, marginTop: 8 }}>処理中…</p>}
-      {message && <p style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>{message}</p>}
+      {result && (
+        <div style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>
+          <div>
+            更新した友だち：{result.updatedFriends}人(追加日時 {result.addedAtUpdated}件 / 流入経路 {result.sourceUpdated}件 / Lステップナンバー {result.lstepUpdated}件)
+          </div>
+          {notes(result).map((n) => (
+            <div key={n}>{n}</div>
+          ))}
+        </div>
+      )}
       {error && <p style={{ fontSize: 12.5, marginTop: 8, color: "#c0392b" }}>{error}</p>}
     </div>
   );

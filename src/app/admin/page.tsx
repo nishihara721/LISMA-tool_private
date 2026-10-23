@@ -2,6 +2,7 @@ import * as ui from "./ui";
 import LogTable, { type Column, type FilterDef } from "./logs/LogTable";
 import { getSourceNameOptions } from "@/lib/filter-options";
 import FriendToolsPanel from "./FriendToolsPanel";
+import { getAllSources } from "@/lib/settings-cache";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,7 @@ const COLUMNS: Column[] = [
 
 export default async function AdminFriendsPage() {
   const sourceOptions = await getSourceNameOptions(["直接追加"]);
+  const sources = (await getAllSources()).map((s) => ({ sourceId: s.sourceId, name: s.name }));
 
   const filters: FilterDef[] = [
     { key: "userName", label: "ユーザー名", type: "text" },
@@ -34,7 +36,7 @@ export default async function AdminFriendsPage() {
     <main style={ui.pageWide}>
       <h1 style={ui.h1}>友だち一覧</h1>
       <FriendToolsPanel />
-      <LogTable kind="friends" columns={COLUMNS} filters={filters} logType="friends" fileNamePrefix="友だち一覧" />
+      <LogTable kind="friends" columns={COLUMNS} filters={filters} logType="friends" fileNamePrefix="友だち一覧" friendEditSources={sources} />
     </main>
   );
 }

@@ -5,6 +5,8 @@ import * as ui from "../ui";
 import MultiSelect from "../MultiSelect";
 import Pager from "../Pager";
 import { useCanEditReports } from "../CurrentUserContext";
+import { EditPencilIcon } from "../icons";
+import FriendEditDialog, { type FriendEditTarget } from "./FriendEditDialog";
 
 // スプレッドシート出力先の設定。指定しなければGAS側のデフォルト(logTypeという名前のシートに追記)で動作する。
 export type SheetWriteMode = "append" | "overwrite" | "cell";
@@ -71,6 +73,8 @@ type LogTableProps = {
   logType: string; // スプレッドシート送信時のシート識別名に使う(英数字推奨)
   fileNamePrefix: string; // CSVファイル名の接頭辞(日本語可)
   defaultToday?: boolean; // trueなら、開いた時は主たる日時(primary)の期間を「当日」に絞り込む
+  friendEditSources?: { sourceId: string; name: string }[]; // 指定すると、友だち一覧の各行に流入経路・追加日時の手動変更(鉛筆アイコン)を出す
+  cvEdit?: boolean; // trueにすると、編集用成果ログ向けに、行の選択・非表示/表示に戻す操作を出す(管理者のみ)
   noWrap?: boolean; // trueにすると、セルの文字を折り返さず、テーブルが画面に入りきらない場合は横スクロールにする
 };
 
@@ -123,7 +127,12 @@ export default function LogTable({
   fileNamePrefix,
   defaultToday = false,
   noWrap = false,
+  friendEditSources,
+  cvEdit = false,
 }: LogTableProps) {
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [editBusy, setEditBusy] = useState(false);
+  const [editTarget, setEditTarget] = useState<FriendEditTarget | null>(null);
   // 閲覧権限のユーザーは、スプレッドシートへの書き込み(送信)はできない(サーバー側でも拒否している)
   const canSendToSheet = useCanEditReports();
   const [filterState, setFilterState] = useState<FilterState>(() => emptyFilterState(filters, defaultToday));
@@ -181,6 +190,7 @@ export default function LogTable({
     setLoadError("");
     setPages([]);
     setPageIndex(0);
+    setSelected(new Set());
     fetchPage(null, PAGE_SIZE, appliedFilters)
       .then((page) => {
         if (seq === requestSeq.current) setPages([page]);
@@ -214,6 +224,36 @@ export default function LogTable({
     } finally {
       if (seq === requestSeq.current) setLoading(false);
     }
+  }
+
+  // 編集用成果ログ: 指定した成果を非表示にする/表示に戻す。成果の種類・日時はサーバー側でIDから調べる
+  async function setCvHidden(ids: string[], hidden: boolean) {
+    if (ids.length === 0) return;
+    setEditBusy(true);
+    try {
+      const res = await fetch("/api/report/cv/visibility", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ hidden, ids }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? "更新に失敗しました");
+      setSelected(new Set());
+      setReloadTick((n) => n + 1);
+    } catch (e) {
+      alert(`更新に失敗しました: ${(e as Error).message ?? e}`);
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((s) => {
+      const next = new Set(s);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
   function goPrev() {
@@ -334,6 +374,7 @@ export default function LogTable({
     if (col.render === "level") {
       return <span style={{ color: LEVEL_COLOR[v] ?? "#4a5568", fontWeight: 600 }}>{v}</span>;
     }
+    if (cvEdit && col.key === "status" && v === "非表示") return <span style={{ color: "#c0392b", fontWeight: 600 }}>{v}</span>;
     return v === "" ? "-" : v;
   }
 
@@ -424,6 +465,27 @@ export default function LogTable({
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
         <p style={{ ...ui.filterResultCount, margin: 0 }}>{loading ? "読み込み中…" : `${rows.length}件表示`}</p>
+        {cvEdit && (
+          <>
+            <button
+              type="button"
+              style={ui.buttonSmall}
+              onClick={() => setCvHidden(Array.from(selected), true)}
+              disabled={selected.size === 0 || editBusy}
+            >
+              選択した行を非表示にする
+            </button>
+            <button
+              type="button"
+              style={ui.buttonSmall}
+              onClick={() => setCvHidden(Array.from(selected), false)}
+              disabled={selected.size === 0 || editBusy}
+            >
+              選択した行を表示に戻す
+            </button>
+            {selected.size > 0 && <span style={{ fontSize: 12.5 }}>{selected.size}件選択中</span>}
+          </>
+        )}
         <button type="button" style={ui.buttonSmall} onClick={downloadCsv} disabled={noRows || exporting}>
           {exporting ? "取得中…" : "CSVダウンロード"}
         </button>
@@ -524,26 +586,81 @@ export default function LogTable({
         <table style={ui.table} className="admin-table">
           <thead>
             <tr>
+              {cvEdit && (
+                <th style={{ ...ui.th, width: 32 }}>
+                  <input
+                    type="checkbox"
+                    checked={rows.length > 0 && rows.every((r) => selected.has(r.id))}
+                    onChange={() =>
+                      setSelected((s) => {
+                        const all = rows.length > 0 && rows.every((r) => s.has(r.id));
+                        const next = new Set(s);
+                        rows.forEach((r) => (all ? next.delete(r.id) : next.add(r.id)));
+                        return next;
+                      })
+                    }
+                  />
+                </th>
+              )}
               {columns.map((col) => (
                 <th key={col.key} style={ui.th}>
                   {col.label}
                 </th>
               ))}
+              {(friendEditSources || cvEdit) && <th style={{ ...ui.th, width: cvEdit ? 110 : 50 }} />}
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
-              <tr key={row.id}>
+              <tr key={row.id} style={cvEdit && row.cells.isHidden === "1" ? { opacity: 0.55 } : undefined}>
+                {cvEdit && (
+                  <td style={{ ...ui.td, whiteSpace: "nowrap" }}>
+                    <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleSelect(row.id)} />
+                  </td>
+                )}
                 {columns.map((col) => (
                   <td key={col.key} style={noWrap ? { ...ui.td, whiteSpace: "nowrap" } : ui.td}>
                     {renderCell(col, row)}
                   </td>
                 ))}
+                {cvEdit && (
+                  <td style={{ ...ui.td, whiteSpace: "nowrap" }}>
+                    <button
+                      type="button"
+                      style={ui.buttonSmall}
+                      onClick={() => setCvHidden([row.id], row.cells.isHidden !== "1")}
+                      disabled={editBusy}
+                    >
+                      {row.cells.isHidden === "1" ? "表示に戻す" : "非表示にする"}
+                    </button>
+                  </td>
+                )}
+                {friendEditSources && (
+                  <td style={{ ...ui.td, textAlign: "center" }}>
+                    <button
+                      type="button"
+                      style={ui.iconButton}
+                      title="流入経路・追加日時を変更"
+                      onClick={() =>
+                        setEditTarget({
+                          userId: row.id,
+                          displayName: row.cells.displayName ?? row.id,
+                          sourceId: row.cells.sourceId ?? "",
+                          addedAt: Number(row.cells.addedAtMs),
+                          preExisting: row.cells.isPreExisting === "1",
+                          addedAtEstimated: row.cells.isEstimated === "1",
+                        })
+                      }
+                    >
+                      <EditPencilIcon />
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
             {!loading && rows.length === 0 && (
               <tr>
-                <td style={ui.td} colSpan={columns.length}>
+                <td style={ui.td} colSpan={columns.length + (friendEditSources ? 1 : 0) + (cvEdit ? 2 : 0)}>
                   該当するデータがありません
                 </td>
               </tr>
@@ -552,6 +669,17 @@ export default function LogTable({
         </table>
       </div>
       {pager}
+      {editTarget && friendEditSources && (
+        <FriendEditDialog
+          target={editTarget}
+          sources={friendEditSources}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            setReloadTick((n) => n + 1);
+          }}
+        />
+      )}
     </>
   );
 }
