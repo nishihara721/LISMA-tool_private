@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const session = await requireAdminSession();
   if (!session) return NextResponse.json({ error: "権限がありません" }, { status: 403 });
-  return NextResponse.json(await listAdMetricsImports());
+  return NextResponse.json(await listAdMetricsImports("ad_metrics"));
 }
 
 // POST: imp数・CL数の取り込み(日次・ポップアップ別・シナリオ別・離脱地点別・訴求別・流入経路別・ポップアップ×シナリオ別を1回でまとめて)。

@@ -79,7 +79,7 @@ export default function NewAdminUserPage() {
             style={{ ...ui.input, maxWidth: 260 }}
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="例: 西原ちひろ"
+            placeholder="例: ファイブエス 太郎"
           />
         </div>
         <div style={ui.field}>

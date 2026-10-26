@@ -11,23 +11,20 @@ import { parseAppealPvRows, parsePvRows } from "@/lib/pv-import";
 // 「訴求別日次レポート」それぞれに取り込み口があると分かりにくいため、取り込みはこのページに一本化し、
 // 1回の取り込みで5つのレポート(および月次のポップアップ×シナリオ別・設置先×訴求×…別レポート)すべてに反映する。
 // 集計結果を見るには、取り込み後にそれぞれのレポート画面を開く。
-export default function AdMetricsImportPage() {
-  const [busy, setBusy] = useState(false);
-  const [resultMessage, setResultMessage] = useState("");
-  const [errorMessage, setErrorMessage] = useState("");
+type ImportRecord = {
+  importId: string;
+  createdAt: number;
+  createdBy: string;
+  fileName: string;
+  dateFrom: string;
+  dateTo: string;
+  counts: Record<string, number>;
+  status: "applying" | "applied" | "undone";
+};
 
-  type ImportRecord = {
-    importId: string;
-    createdAt: number;
-    createdBy: string;
-    fileName: string;
-    dateFrom: string;
-    dateTo: string;
-    counts: Record<string, number>;
-    status: "applying" | "applied" | "undone";
-    undoneAt?: number;
-    undoneBy?: string;
-  };
+// 取り込み履歴と、取り消しの操作。imp数・CL数の取り込みと、訴求別PV数の取り込みで共通に使う。
+// 取り消せるのは、取り消していない取り込みのうち一番新しい1件だけ(新しい順に取り消す)。
+function ImportHistory({ endpoint, reloadKey }: { endpoint: string; reloadKey: number }) {
   const [history, setHistory] = useState<ImportRecord[]>([]);
   const [latestActiveId, setLatestActiveId] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState("");
@@ -37,7 +34,7 @@ export default function AdMetricsImportPage() {
 
   const loadHistory = useCallback(async () => {
     try {
-      const res = await fetch("/api/admin/ad-metrics-import", { cache: "no-store" });
+      const res = await fetch(endpoint, { cache: "no-store" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "取り込み履歴の取得に失敗しました");
       setHistory(data.records ?? []);
@@ -46,10 +43,10 @@ export default function AdMetricsImportPage() {
     } catch (e) {
       setHistoryError(String(e));
     }
-  }, []);
+  }, [endpoint]);
   useEffect(() => {
     loadHistory();
-  }, [loadHistory]);
+  }, [loadHistory, reloadKey]);
 
   async function undoImport(importId: string) {
     setUndoBusy(true);
@@ -67,6 +64,84 @@ export default function AdMetricsImportPage() {
       setUndoBusy(false);
     }
   }
+
+  return (
+    <>
+        <h3 style={{ fontSize: 13.5, margin: "18px 0 6px" }}>取り込み履歴</h3>
+        <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 8px", lineHeight: 1.6 }}>
+          取り消すと、その取り込みで書き換えた値を、取り込み前の値に戻します(取り込んでいない項目やメモは変わりません)。
+          取り消せるのは、取り消していない取り込みのうち一番新しいものだけです。古いものは、新しいものを取り消したあとに取り消せます。履歴は30日間保存され、それより古いものは自動で削除されます。
+        </p>
+        {historyError && <p style={{ fontSize: 12.5, color: "#c0392b" }}>{historyError}</p>}
+        {undoMessage && <p style={{ fontSize: 12.5, margin: "0 0 8px", lineHeight: 1.7 }}>{undoMessage}</p>}
+        {history.length === 0 && !historyError ? (
+          <p style={{ fontSize: 12.5, color: "#6b7280" }}>取り込み履歴はまだありません(この機能の追加後に取り込んだものが対象です)。</p>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", fontSize: 12.5, width: "100%" }}>
+              <thead>
+                <tr>
+                  {["取り込み日時", "ファイル名", "対象の日付", "日付の件数", "状態", ""].map((h) => (
+                    <th key={h} style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #d1d5db", whiteSpace: "nowrap" }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {history.map((r) => {
+                  const undone = r.status === "undone";
+                  const canUndo = r.importId === latestActiveId;
+                  return (
+                    <tr key={r.importId} style={{ opacity: undone ? 0.55 : 1 }}>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
+                        {new Date(r.createdAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}
+                      </td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", wordBreak: "break-all" }}>{r.fileName || "-"}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
+                        {r.dateFrom === r.dateTo ? r.dateFrom : `${r.dateFrom}〜${r.dateTo}`}
+                      </td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>{r.counts?.byDate ?? "-"}</td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
+                        {undone ? "取り消し済み" : r.status === "applying" ? "途中で中断(取り消しで元に戻せます)" : "取り込み済み"}
+                      </td>
+                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
+                        {!undone &&
+                          canUndo &&
+                          (confirmUndoId === r.importId ? (
+                            <>
+                              <button type="button" style={ui.buttonPrimary} disabled={undoBusy} onClick={() => undoImport(r.importId)}>
+                                {undoBusy ? "取り消し中…" : "取り消しを実行"}
+                              </button>{" "}
+                              <button type="button" style={ui.button} disabled={undoBusy} onClick={() => setConfirmUndoId(null)}>
+                                やめる
+                              </button>
+                            </>
+                          ) : (
+                            <button type="button" style={ui.button} onClick={() => setConfirmUndoId(r.importId)}>
+                              この取り込みを取り消す
+                            </button>
+                          ))}
+                        {!undone && !canUndo && <span style={{ color: "#6b7280" }}>新しい取り込みを先に取り消す</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </>
+  );
+}
+
+export default function AdMetricsImportPage() {
+  const [busy, setBusy] = useState(false);
+  const [resultMessage, setResultMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const [historyReload, setHistoryReload] = useState(0);
+  const [appealHistoryReload, setAppealHistoryReload] = useState(0);
 
   const [pvBusy, setPvBusy] = useState(false);
   const [pvResultMessage, setPvResultMessage] = useState("");
@@ -166,8 +241,7 @@ export default function AdMetricsImportPage() {
       }
 
       setResultMessage(`日次レポートに${parsed.byDate.length}日分のimp数・CL数を取り込みました。${breakdownNote}`);
-      setUndoMessage("");
-      await loadHistory();
+      setHistoryReload((n) => n + 1);
     } catch (e) {
       setErrorMessage(`取り込みに失敗しました: ${e}`);
     } finally {
@@ -226,14 +300,15 @@ export default function AdMetricsImportPage() {
         return;
       }
 
-      const res = await fetch("/api/report/ad-metrics-by-appeal/import", {
+      const res = await fetch("/api/admin/appeal-pv-import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ rows: parsed }),
+        body: JSON.stringify({ fileName: file.name, rows: parsed }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "取り込みに失敗しました");
       setAppealPvResultMessage(`訴求別日次レポートに${parsed.length}件(日付×訴求)分のPV数を取り込みました。`);
+      setAppealHistoryReload((n) => n + 1);
     } catch (e) {
       setAppealPvErrorMessage(`取り込みに失敗しました: ${e}`);
     } finally {
@@ -261,70 +336,7 @@ export default function AdMetricsImportPage() {
         {resultMessage && <p style={{ fontSize: 12.5, marginTop: 8, lineHeight: 1.7 }}>{resultMessage}</p>}
         {errorMessage && <p style={{ fontSize: 12.5, marginTop: 8, color: "#c0392b" }}>{errorMessage}</p>}
 
-        <h3 style={{ fontSize: 13.5, margin: "18px 0 6px" }}>取り込み履歴</h3>
-        <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 8px", lineHeight: 1.6 }}>
-          取り消すと、その取り込みで書き換えた imp数・CL数 を、取り込み前の値に戻します(PV数・メモなどは変わりません)。
-          取り消せるのは、取り消していない取り込みのうち一番新しいものだけです。古いものは、新しいものを取り消したあとに取り消せます。
-        </p>
-        {historyError && <p style={{ fontSize: 12.5, color: "#c0392b" }}>{historyError}</p>}
-        {undoMessage && <p style={{ fontSize: 12.5, margin: "0 0 8px", lineHeight: 1.7 }}>{undoMessage}</p>}
-        {history.length === 0 && !historyError ? (
-          <p style={{ fontSize: 12.5, color: "#6b7280" }}>取り込み履歴はまだありません(この機能の追加後に取り込んだものが対象です)。</p>
-        ) : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", fontSize: 12.5, width: "100%" }}>
-              <thead>
-                <tr>
-                  {["取り込み日時", "ファイル名", "対象の日付", "日付の件数", "状態", ""].map((h) => (
-                    <th key={h} style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid #d1d5db", whiteSpace: "nowrap" }}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {history.map((r) => {
-                  const undone = r.status === "undone";
-                  const canUndo = r.importId === latestActiveId;
-                  return (
-                    <tr key={r.importId} style={{ opacity: undone ? 0.55 : 1 }}>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
-                        {new Date(r.createdAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" })}
-                      </td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", wordBreak: "break-all" }}>{r.fileName || "-"}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
-                        {r.dateFrom === r.dateTo ? r.dateFrom : `${r.dateFrom}〜${r.dateTo}`}
-                      </td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb" }}>{r.counts?.byDate ?? "-"}</td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
-                        {undone ? "取り消し済み" : r.status === "applying" ? "途中で中断(取り消しで元に戻せます)" : "取り込み済み"}
-                      </td>
-                      <td style={{ padding: "6px 8px", borderBottom: "1px solid #e5e7eb", whiteSpace: "nowrap" }}>
-                        {!undone &&
-                          canUndo &&
-                          (confirmUndoId === r.importId ? (
-                            <>
-                              <button type="button" style={ui.buttonPrimary} disabled={undoBusy} onClick={() => undoImport(r.importId)}>
-                                {undoBusy ? "取り消し中…" : "取り消しを実行"}
-                              </button>{" "}
-                              <button type="button" style={ui.button} disabled={undoBusy} onClick={() => setConfirmUndoId(null)}>
-                                やめる
-                              </button>
-                            </>
-                          ) : (
-                            <button type="button" style={ui.button} onClick={() => setConfirmUndoId(r.importId)}>
-                              この取り込みを取り消す
-                            </button>
-                          ))}
-                        {!undone && !canUndo && <span style={{ color: "#6b7280" }}>新しい取り込みを先に取り消す</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <ImportHistory endpoint="/api/admin/ad-metrics-import" reloadKey={historyReload} />
       </div>
 
       <div style={ui.section}>
@@ -363,6 +375,8 @@ export default function AdMetricsImportPage() {
         {appealPvErrorMessage && (
           <p style={{ fontSize: 12.5, marginTop: 8, color: "#c0392b" }}>{appealPvErrorMessage}</p>
         )}
+
+        <ImportHistory endpoint="/api/admin/appeal-pv-import" reloadKey={appealHistoryReload} />
       </div>
     </main>
   );
