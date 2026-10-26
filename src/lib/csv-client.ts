@@ -7,6 +7,7 @@ export const CSV_ACCEPT = ".csv,text/csv";
 
 // ダブルクォート囲み・カンマ区切りに対応した簡易CSVパーサー
 export function parseCsv(text: string): string[][] {
+  text = text.replace(/^\uFEFF/, ""); // 先頭のBOM(文字コードの印)は取り除く
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -40,7 +41,8 @@ export function parseCsv(text: string): string[][] {
     } else if (ch === "\n") {
       pushRow();
     } else if (ch === "\r") {
-      // 無視(\r\nの\rは読み飛ばす)
+      // \r\n の \r は読み飛ばす。\r だけで改行しているファイル(古いMac形式)は、行の区切りとして扱う
+      if (text[i + 1] !== "\n") pushRow();
     } else {
       field += ch;
     }
@@ -71,25 +73,46 @@ export function monthsAgoJST(months: number): string {
   return new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Tokyo" }).format(d).slice(0, 7);
 }
 
-// "YYYY/MM/DD"・"YYYY-MM-DD" どちらの区切りでも、日付単独・日時付き("HH:mm"付き)の
-// いずれでも受け付け、日本時間として解釈してミリ秒に変換する
+// 日付の文字列を { year, month, day } に読み取る共通処理。次の形式を受け付ける(日時付きの場合、時刻は呼び出し側が別に処理する)。
+//  ・"2026/10/19"・"2026-10-19"・"2026/1/9"(月日は1桁でもよい)・"2026年10月19日"
+//  ・年が無い日付("10/19"など)は読み取らない(年が分からないため。呼び出し側で読み取れない行として扱う)
+function readDateParts(text: string): { year: string; month: string; day: string; rest: string } | null {
+  const t = text.trim();
+  const pad = (n: string) => n.padStart(2, "0");
+  const valid = (m: string, d: string) => Number(m) >= 1 && Number(m) <= 12 && Number(d) >= 1 && Number(d) <= 31;
+  const m = t.match(/^(\d{4})(?:[/\-.]|年)(\d{1,2})(?:[/\-.]|月)(\d{1,2})日?(.*)$/);
+  if (m) {
+    if (!valid(m[2], m[3])) return null;
+    return { year: m[1], month: pad(m[2]), day: pad(m[3]), rest: m[4] };
+  }
+  return null;
+}
+
+// 日付単独・日時付き("HH:mm"付き)のいずれでも受け付け、日本時間として解釈してミリ秒に変換する
 export function parseJstDateTime(text: string): number | null {
   const trimmed = text.trim();
   if (!trimmed) return null;
-  const match = trimmed.match(/^(\d{4})[/-](\d{2})[/-](\d{2})(?:[ T](\d{2}:\d{2}))?$/);
-  if (!match) return null;
-  const [, year, month, day, time] = match;
-  const ms = new Date(`${year}-${month}-${day}T${time ?? "00:00"}:00+09:00`).getTime();
+  const parts = readDateParts(trimmed);
+  if (!parts) return null;
+  const timeMatch = parts.rest.match(/^[ T]+(\d{1,2}):(\d{2})$/);
+  if (parts.rest.trim() !== "" && !timeMatch) return null;
+  const time = timeMatch ? `${timeMatch[1].padStart(2, "0")}:${timeMatch[2]}` : "00:00";
+  const ms = new Date(`${parts.year}-${parts.month}-${parts.day}T${time}:00+09:00`).getTime();
   return Number.isNaN(ms) ? null : ms;
 }
 
-// "YYYY/MM/DD"・"YYYY-MM-DD" を "YYYY-MM-DD" の日付キーに正規化する(日時部分・時刻は無視)
+// 日付を "YYYY-MM-DD" の日付キーに正規化する(日時部分・時刻は無視)
 export function parseJstDateKey(text: string): string | null {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^(\d{4})[/-](\d{2})[/-](\d{2})/);
-  if (!match) return null;
-  const [, year, month, day] = match;
-  return `${year}-${month}-${day}`;
+  const parts = readDateParts(text);
+  if (!parts) return null;
+  const key = `${parts.year}-${parts.month}-${parts.day}`;
+  return Number.isNaN(Date.parse(`${key}T00:00:00+09:00`)) ? null : key;
+}
+
+// CSVの数値セルを数値に変換する("1,234"のような3桁区切り・全角数字・前後の空白を許容)。数値でなければNaN。
+export function parseCsvNumber(text: string): number {
+  const t = text.normalize("NFKC").replace(/[,\s]/g, "");
+  return t === "" ? NaN : Number(t);
 }
 
 // CSVファイルの文字コードを判定してテキストに変換する。

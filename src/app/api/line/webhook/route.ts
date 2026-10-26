@@ -145,8 +145,11 @@ async function handleFollow(userId: string) {
   const counterRef = adminDb.collection("counters").doc("friendIdNumber");
   // 日ごとの集計(daily_stats)を更新するため、すでに友だちドキュメントがあった場合(ブロック後の再追加)の追加日時・流入経路を控える
   let prev: { addedAt: number; sourceId: string | undefined; estimated?: boolean } | undefined;
+  // ブロック解除による再追加(すでに確定した追加日時・流入経路を持つ友だち)かどうか
+  let isReFollow = false;
   await adminDb.runTransaction(async (tx) => {
     prev = undefined;
+    isReFollow = false;
     const friendSnap = await tx.get(friendRef);
     if (friendSnap.exists && typeof friendSnap.data()?.addedAt === "number") {
       prev = {
@@ -156,6 +159,22 @@ async function handleFollow(userId: string) {
       };
     }
     const existingIdNumber = friendSnap.data()?.idNumber as number | undefined;
+    if (existingIdNumber && friendSnap.data()?.addedAtEstimated !== true) {
+      // ブロック → ブロック解除(再追加)。友だち一覧の「友だち追加日時」「流入経路」は初回の友だち追加時の値のまま残す。
+      // (直前のクリック記録は、再クリックのものである可能性があり、初回の流入経路とは限らないため、上書きしない)
+      // 「最新の流入経路」も、リンクのクリック時(/api/track/click)に更新済みのため、ここでは触らない。
+      isReFollow = true;
+      tx.set(
+        friendRef,
+        {
+          unfollowedAt: null,
+          ...(friend.displayName ? { displayName: friend.displayName } : {}),
+          ...(friend.pictureUrl ? { pictureUrl: friend.pictureUrl } : {}),
+        },
+        { merge: true }
+      );
+      return;
+    }
     if (existingIdNumber) {
       // 追加日時が仮だった友だち(導入前からの友だちを自動登録したもの)は、今回の追加で日時が確定するため仮の印を外す
       // ただし、自動登録からほとんど時間が経っていない場合は、「友だち追加の直後に、遅れて届いたリンクのクリック記録」で
@@ -175,6 +194,9 @@ async function handleFollow(userId: string) {
     tx.set(counterRef, { value: nextIdNumber }, { merge: true });
     tx.set(friendRef, { ...friend, idNumber: nextIdNumber }, { merge: true });
   });
+
+  // ブロック解除による再追加は、友だち追加数(日ごとの集計)に加えない(初回の追加日のまま)
+  if (isReFollow) return;
 
   const before = prev as { addedAt: number; sourceId: string | undefined; estimated?: boolean } | undefined;
   // 仮の日時だった友だちは集計に含めていなかったため、付け替えではなく新規の追加として数える

@@ -64,6 +64,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 function sourceNameOf(sourceId: string | undefined, sourceMap: Map<string, SourceDoc>): string {
   if (!sourceId) return "(未特定)";
+  if (sourceId === "unknown") return "(未特定)";
   if (sourceId === "direct") return "直接追加";
   return sourceMap.get(sourceId)?.name ?? sourceId;
 }
@@ -90,7 +91,7 @@ const friends: Def = {
       const f = data as FriendDoc;
       const displayName = f.displayName ?? f.userId;
       const source = sourceNameOf(f.sourceId, ctx.sourceMap);
-      const status = f.unfollowedAt ? "ブロック/解除済" : "友だち";
+      const status = f.unfollowedAt ? "ブロック" : "友だち";
       return {
         id,
         sortTs: f.addedAt,
@@ -244,7 +245,7 @@ const sourceLinkClicks: Def = {
           : c.userId
             ? "(記録なし)"
             : "(未特定)";
-      const clicked = c.sourceNameAtClick ?? ctx.sourceMap.get(c.sourceId)?.name ?? c.sourceId;
+      const clicked = c.sourceNameAtClick ?? sourceNameOf(c.sourceId, ctx.sourceMap);
       const status = c.statusAtClick ? STATUS_LABELS[c.statusAtClick] : "(記録なし)";
       return {
         id,

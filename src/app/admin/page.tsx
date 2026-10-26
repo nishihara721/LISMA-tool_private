@@ -27,7 +27,7 @@ export default async function AdminFriendsPage() {
     { key: "lineUserId", label: "LINEユーザーID", type: "text" },
     { key: "source", label: "流入経路", type: "multiselect", options: sourceOptions },
     { key: "addedAt", label: "友だち追加日時", type: "date", primary: true },
-    { key: "status", label: "友だち状態", type: "select", options: ["友だち", "ブロック/解除済"] },
+    { key: "status", label: "友だち状態", type: "select", options: ["友だち", "ブロック"] },
     { key: "preExisting", label: "導入前の友だち", type: "select", options: ["導入前", "通常"] },
     { key: "lstep", label: "Lステップナンバー", type: "select", options: ["付与済み", "未付与"] },
   ];

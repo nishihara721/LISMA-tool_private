@@ -32,7 +32,7 @@ type SectionDef = {
   field: string; // APIの各行で名前が入っているフィールド名
   header: string; // 表の左端の見出し
   csvName: string;
-  withImpRate?: boolean; // imp率の列を付けるか(月別合計のみ。他の表は組み合わせごとにPV数が分かれないため付けない)
+  withImpRate?: boolean; // PV数・imp率の列を付けるか(月別合計のみ。他の表は組み合わせごとのPV数がないため付けない)
 };
 
 const SECTIONS: SectionDef[] = [
@@ -112,7 +112,7 @@ function buildMonthlyTotals(rows: ApiRow[]): TotalRow[] {
 }
 
 function cells(r: TotalRow, withImpRate: boolean): string[] {
-  return [num(r.pv), num(r.imp), ...(withImpRate ? [pct(r.impRate)] : []), num(r.cl), pct(r.clRate), String(r.friend), pct(r.friendAddRate), String(r.cv), pct(r.cvr), formatYen(r.billing)];
+  return [...(withImpRate ? [num(r.pv)] : []), num(r.imp), ...(withImpRate ? [pct(r.impRate)] : []), num(r.cl), pct(r.clRate), String(r.friend), pct(r.friendAddRate), String(r.cv), pct(r.cvr), formatYen(r.billing)];
 }
 
 export default function MonthlySummaryPage() {
@@ -149,10 +149,10 @@ export default function MonthlySummaryPage() {
 
   function downloadCsv(sec: SectionDef) {
     const escape = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-    const header = [sec.header, "PV数", "imp数", ...(sec.withImpRate ? ["imp率(%)"] : []), "CL数", "CL率(%)", "友だち追加数", "友だち追加率(%)", "CV数", "CVR(%)", "請求額(円)"].map(escape).join(",");
+    const header = [sec.header, ...(sec.withImpRate ? ["PV数"] : []), "imp数", ...(sec.withImpRate ? ["imp率(%)"] : []), "CL数", "CL率(%)", "友だち追加数", "友だち追加率(%)", "CV数", "CVR(%)", "請求額(円)"].map(escape).join(",");
     const plain = (v: number | null) => (v === null ? "-" : String(v));
     const lines = (data[sec.key] ?? []).map((r) =>
-      [r.name, plain(r.pv), plain(r.imp), ...(sec.withImpRate ? [plain(r.impRate)] : []), plain(r.cl), plain(r.clRate), String(r.friend), plain(r.friendAddRate), String(r.cv), plain(r.cvr), String(r.billing)]
+      [r.name, ...(sec.withImpRate ? [plain(r.pv)] : []), plain(r.imp), ...(sec.withImpRate ? [plain(r.impRate)] : []), plain(r.cl), plain(r.clRate), String(r.friend), plain(r.friendAddRate), String(r.cv), plain(r.cvr), String(r.billing)]
         .map(escape)
         .join(",")
     );
@@ -231,7 +231,7 @@ export default function MonthlySummaryPage() {
                     <thead>
                       <tr>
                         <th style={{ ...ui.th, position: "static", whiteSpace: "nowrap" }}>{sec.header}</th>
-                        {METRIC_HEADERS.filter((h) => sec.withImpRate || h !== "imp率").map((h) => (
+                        {METRIC_HEADERS.filter((h) => sec.withImpRate || (h !== "imp率" && h !== "PV数")).map((h) => (
                           <th key={h} style={{ ...ui.th, position: "static", textAlign: "right", whiteSpace: "nowrap" }}>
                             {h}
                           </th>
