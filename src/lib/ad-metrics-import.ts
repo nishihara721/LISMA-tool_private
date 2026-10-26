@@ -3,7 +3,7 @@
 // 「シナリオ別日次レポート」用(日付×シナリオで合算)・「離脱地点別日次レポート」用(日付×離脱地点で合算)・
 // 「訴求別日次レポート」用(日付×訴求で合算)・「設置先×訴求×…別月次レポート」用(日付×流入経路の名前で合算)のimp数・CL数を、1回のファイル読み込みでまとめて計算するための共通ロジック。
 // 5つのレポート画面のどの取り込み口から使っても、同じ結果になるようにしている。
-import { parseCsvNumber, parseJstDateKey } from "./csv-client";
+import { parseCsvNumber, parseSlashDateKey } from "./csv-client";
 import {
   extractAppealFromScenarioName,
   extractExitPointFromScenarioName,
@@ -78,7 +78,7 @@ export function parseAdMetricsRows(csvRows: string[][]): AdMetricsImportResult |
   let skippedForPopupScenario = 0;
 
   csvRows.slice(1).forEach((r) => {
-    const dateKey = parseJstDateKey(r[dateCol] ?? "");
+    const dateKey = parseSlashDateKey(r[dateCol] ?? "");
     if (!dateKey) return; // 日付が読み取れない行はスキップ
 
     const imp = parseCsvNumber(r[impCol] ?? "") || 0;

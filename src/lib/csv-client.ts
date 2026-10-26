@@ -109,6 +109,27 @@ export function parseJstDateKey(text: string): string | null {
   return Number.isNaN(Date.parse(`${key}T00:00:00+09:00`)) ? null : key;
 }
 
+// 日付を "YYYY-MM-DD" の日付キーに正規化する(imp数・CL数・PV数・訴求別PV数の取り込み専用)。
+// 受け付けるのは「YYYY/MM/DD」(月日は2桁)のみ。後ろに時刻が付いていても日付部分だけを見る。
+// それ以外の形式(2026-10-19、2026/1/9、10/19 など)や実在しない日付は null(その行は読み込まない)。
+export function parseSlashDateKey(text: string): string | null {
+  const m = /^(\d{4})\/(\d{2})\/(\d{2})(?:$|[\sT])/.exec(text.normalize("NFKC").replace(/^\uFEFF/, "").trim());
+  if (!m) return null;
+  const key = `${m[1]}-${m[2]}-${m[3]}`;
+  const d = new Date(`${key}T00:00:00+09:00`);
+  if (Number.isNaN(d.getTime())) return null;
+  // 2月30日などは Date が繰り上げるため、日付が変わっていないか確認する
+  const back = new Date(d.getTime() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+  return back === key ? key : null;
+}
+
+// 日付列に値があるのに YYYY/MM/DD として読めない行の数(取り込み結果での注意書き用)
+export function countUnreadableSlashDates(csvRows: string[][], dateHeader = "日付"): number {
+  const col = (csvRows[0] ?? []).indexOf(dateHeader);
+  if (col === -1) return 0;
+  return csvRows.slice(1).filter((r) => (r[col] ?? "").trim() !== "" && !parseSlashDateKey(r[col] ?? "")).length;
+}
+
 // CSVの数値セルを数値に変換する("1,234"のような3桁区切り・全角数字・前後の空白を許容)。数値でなければNaN。
 export function parseCsvNumber(text: string): number {
   const t = text.normalize("NFKC").replace(/[,\s]/g, "");

@@ -1,7 +1,7 @@
 // PV数集計ツールからエクスポートしたCSV(日付ごとの行)から、日次レポートに取り込む
 // PV数を読み取るための共通ロジック。見出し行に「日付」「合計」の2列が必要
 // (「合計」列の値をその日のPV数としてそのまま使う。列の並び順は自動判定するため問わない)。
-import { parseCsvNumber, parseJstDateKey } from "./csv-client";
+import { parseCsvNumber, parseSlashDateKey } from "./csv-client";
 
 export type PvImportRow = { date: string; pvCount: number };
 
@@ -19,7 +19,7 @@ export function parsePvRows(csvRows: string[][]): PvImportRow[] | { error: strin
 
   const byDate = new Map<string, number>();
   csvRows.slice(1).forEach((r) => {
-    const dateKey = parseJstDateKey(r[dateCol] ?? "");
+    const dateKey = parseSlashDateKey(r[dateCol] ?? "");
     if (!dateKey) return; // 日付が読み取れない行はスキップ
     const pvCount = parseCsvNumber(r[totalCol] ?? "") || 0;
     byDate.set(dateKey, (byDate.get(dateKey) ?? 0) + pvCount);
@@ -54,7 +54,7 @@ export function parseAppealPvRows(csvRows: string[][]): AppealPvImportRow[] | { 
 
   const rows: AppealPvImportRow[] = [];
   csvRows.slice(1).forEach((r) => {
-    const dateKey = parseJstDateKey(r[dateCol] ?? "");
+    const dateKey = parseSlashDateKey(r[dateCol] ?? "");
     if (!dateKey) return; // 日付が読み取れない行はスキップ
     appealCols.forEach(({ appeal, i }) => {
       const raw = (r[i] ?? "").toString().trim();

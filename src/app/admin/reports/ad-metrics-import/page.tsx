@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import * as ui from "../../ui";
 import { CSV_ACCEPT, parseCsvFile } from "@/lib/csv-client";
 import { parseAdMetricsRows } from "@/lib/ad-metrics-import";
+import { countUnreadableSlashDates } from "@/lib/csv-client";
 import { parseAppealPvRows, parsePvRows } from "@/lib/pv-import";
 
 // imp数・CL数のCSV取り込み専用ページ。
@@ -68,10 +69,6 @@ function ImportHistory({ endpoint, reloadKey }: { endpoint: string; reloadKey: n
   return (
     <>
         <h3 style={{ fontSize: 13.5, margin: "18px 0 6px" }}>取り込み履歴</h3>
-        <p style={{ fontSize: 12, color: "#6b7280", margin: "0 0 8px", lineHeight: 1.6 }}>
-          取り消すと、その取り込みで書き換えた値を、取り込み前の値に戻します(取り込んでいない項目やメモは変わりません)。
-          取り消せるのは、取り消していない取り込みのうち一番新しいものだけです。古いものは、新しいものを取り消したあとに取り消せます。履歴は30日間保存され、それより古いものは自動で削除されます。
-        </p>
         {historyError && <p style={{ fontSize: 12.5, color: "#c0392b" }}>{historyError}</p>}
         {undoMessage && <p style={{ fontSize: 12.5, margin: "0 0 8px", lineHeight: 1.7 }}>{undoMessage}</p>}
         {history.length === 0 && !historyError ? (
@@ -151,6 +148,8 @@ export default function AdMetricsImportPage() {
   const [appealPvResultMessage, setAppealPvResultMessage] = useState("");
   const [appealPvErrorMessage, setAppealPvErrorMessage] = useState("");
 
+const dateSkipNote = (rows: string[][]) => { const n = countUnreadableSlashDates(rows); return n > 0 ? `(日付がYYYY/MM/DD形式でない${n}行は読み込んでいません)` : ""; };
+
   async function handleImportAdMetricsFile(file: File) {
     setBusy(true);
     setResultMessage("");
@@ -163,7 +162,7 @@ export default function AdMetricsImportPage() {
         return;
       }
       if (parsed.byDate.length === 0) {
-        setErrorMessage("有効な日付の行が見つかりませんでした");
+        setErrorMessage("YYYY/MM/DD形式(例: 2026/10/19)の日付の行が見つかりませんでした");
         return;
       }
 
@@ -240,7 +239,7 @@ export default function AdMetricsImportPage() {
             : "ポップアップ別・シナリオ別・離脱地点別・訴求別レポートに取り込める行はありませんでした。";
       }
 
-      setResultMessage(`日次レポートに${parsed.byDate.length}日分のimp数・CL数を取り込みました。${breakdownNote}`);
+      setResultMessage(`日次レポートに${parsed.byDate.length}日分のimp数・CL数を取り込みました。${breakdownNote}${dateSkipNote(csvRows)}`);
       setHistoryReload((n) => n + 1);
     } catch (e) {
       setErrorMessage(`取り込みに失敗しました: ${e}`);
@@ -261,7 +260,7 @@ export default function AdMetricsImportPage() {
         return;
       }
       if (parsed.length === 0) {
-        setPvErrorMessage("有効な日付の行が見つかりませんでした");
+        setPvErrorMessage("YYYY/MM/DD形式(例: 2026/10/19)の日付の行が見つかりませんでした");
         return;
       }
 
@@ -275,7 +274,7 @@ export default function AdMetricsImportPage() {
       const dates = parsed.map((r) => r.date).sort();
       const total = parsed.reduce((sum, r) => sum + r.pvCount, 0);
       setPvResultMessage(
-        `日次レポートに${parsed.length}日分のPV数を取り込みました(${dates[0]}〜${dates[dates.length - 1]}、PV数の合計 ${total.toLocaleString("ja-JP")})。`
+        `日次レポートに${parsed.length}日分のPV数を取り込みました(${dates[0]}〜${dates[dates.length - 1]}、PV数の合計 ${total.toLocaleString("ja-JP")})。${dateSkipNote(csvRows)}`
       );
     } catch (e) {
       setPvErrorMessage(`取り込みに失敗しました: ${e}`);
@@ -296,7 +295,7 @@ export default function AdMetricsImportPage() {
         return;
       }
       if (parsed.length === 0) {
-        setAppealPvErrorMessage("有効な(日付, 訴求)の行が見つかりませんでした");
+        setAppealPvErrorMessage("YYYY/MM/DD形式(例: 2026/10/19)の日付と、数値の入った訴求の行が見つかりませんでした");
         return;
       }
 
@@ -307,7 +306,7 @@ export default function AdMetricsImportPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "取り込みに失敗しました");
-      setAppealPvResultMessage(`訴求別日次レポートに${parsed.length}件(日付×訴求)分のPV数を取り込みました。`);
+      setAppealPvResultMessage(`訴求別日次レポートに${parsed.length}件(日付×訴求)分のPV数を取り込みました。${dateSkipNote(csvRows)}`);
       setAppealHistoryReload((n) => n + 1);
     } catch (e) {
       setAppealPvErrorMessage(`取り込みに失敗しました: ${e}`);
