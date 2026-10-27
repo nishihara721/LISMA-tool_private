@@ -87,11 +87,21 @@ export async function GET(req: NextRequest) {
   .spinner { width: 32px; height: 32px; border: 3px solid #eee; border-top-color: #7bb8d4; border-radius: 50%; animation: spin 0.8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .error { padding: 16px; text-align: center; }
+  .app-open { display: none; padding: 24px; text-align: center; max-width: 360px; }
+  .app-open p { line-height: 1.7; margin: 0 0 20px; }
+  .app-open a { display: block; box-sizing: border-box; width: 100%; padding: 14px 12px; border-radius: 6px; font-size: 16px; text-decoration: none; margin-bottom: 12px; }
+  .app-open .primary { background: #06c755; color: #fff; font-weight: bold; }
+  .app-open .secondary { background: #fff; color: #333; border: 1px solid #ccc; font-size: 14px; }
   .error .detail { color: red; font-size: 12px; margin-top: 8px; word-break: break-all; }
 </style>
 </head>
 <body>
 <div id="spinner" class="spinner"></div>
+<div id="app-open" class="app-open">
+  <p>LINEアプリを開いて続行してください。</p>
+  <a id="app-open-btn" class="primary" href="#">LINEアプリで開く</a>
+  <a id="app-continue-btn" class="secondary" href="#">ブラウザで続ける</a>
+</div>
 <div id="error" class="error" style="display: none;">
   <p>エラーが発生しました</p>
   <p class="detail" id="error-detail"></p>
@@ -110,9 +120,9 @@ export async function GET(req: NextRequest) {
 
   // サーバー側に届かないタイプの不具合(SDK読み込み失敗・LIFF初期化失敗等)を報告する。
   // 投げっぱなしでよいため、送信自体の成否は待たない。
-  function sendLogBeacon(stage, message, context) {
+  function sendLogBeacon(stage, message, context, level) {
     try {
-      var body = JSON.stringify({ level: "error", stage: stage, message: message, context: context });
+      var body = JSON.stringify({ level: level || "error", stage: stage, message: message, context: context });
       if (navigator.sendBeacon) {
         navigator.sendBeacon("/api/logs/client", new Blob([body], { type: "text/plain" }));
       } else {
@@ -126,6 +136,35 @@ export async function GET(req: NextRequest) {
   function appendQueryParam(url, key, value) {
     var sep = url.indexOf("?") === -1 ? "?" : "&";
     return url + sep + key + "=" + encodeURIComponent(value);
+  }
+
+  function isIos() {
+    var ua = navigator.userAgent || "";
+    return /iPhone|iPad|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }
+
+  // iPhone・iPadの外部ブラウザ(Safari・アプリ内ブラウザ)では、そのままログイン画面に移るとアプリに切り替わらず
+  // メールアドレス・パスワードの入力画面になることがある。そこで、先に「LINEアプリで開く」ボタンを出す。
+  // ボタンを押す操作から liff.line.me を開くことで、LINEアプリに切り替わりやすくなる。
+  // 「appTried=1」付きで開き直した場合は、同じ画面を繰り返さず、そのままログインへ進む(無限ループ防止)。
+  function showAppOpenPrompt(mode, sourceId, purchaseLinkId) {
+    var q = new URLSearchParams();
+    q.set("mode", mode);
+    if (sourceId) q.set("sourceId", sourceId);
+    if (purchaseLinkId) q.set("purchaseLinkId", purchaseLinkId);
+    var destinationUrl = getParam("destinationUrl");
+    if (destinationUrl) q.set("destinationUrl", destinationUrl);
+    q.set("appTried", "1");
+    document.getElementById("spinner").style.display = "none";
+    document.getElementById("app-open").style.display = "block";
+    document.getElementById("app-open-btn").setAttribute("href", "https://liff.line.me/" + LIFF_ID + "?" + q.toString());
+    document.getElementById("app-continue-btn").addEventListener("click", function (ev) {
+      ev.preventDefault();
+      document.getElementById("app-open").style.display = "none";
+      document.getElementById("spinner").style.display = "block";
+      window.liff.login({ redirectUri: window.location.href });
+    });
+    sendLogBeacon("liff_add.app_open_prompt_shown", "iOSの外部ブラウザで「LINEアプリで開く」画面を表示しました", { mode: mode, sourceId: sourceId }, "info");
   }
 
   function generateClickId() {
@@ -202,6 +241,10 @@ export async function GET(req: NextRequest) {
       })
       .then(function () {
         if (!window.liff.isLoggedIn()) {
+          if (!window.liff.isInClient() && isIos() && !getParam("appTried")) {
+            showAppOpenPrompt(mode, sourceId, purchaseLinkId);
+            return;
+          }
           window.liff.login({ redirectUri: window.location.href });
           return;
         }

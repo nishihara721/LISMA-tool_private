@@ -73,6 +73,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // GASは処理に失敗しても通信としては200を返すため、本文の { ok: false, error } も確認する
+    const result = await res.json().catch(() => null);
+    if (result && result.ok === false) {
+      return NextResponse.json({ error: `スプレッドシート側でエラーが発生しました: ${result.error ?? "不明なエラー"}` }, { status: 502 });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("スプレッドシートへの送信エラー:", e);

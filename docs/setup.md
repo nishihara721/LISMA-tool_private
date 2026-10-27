@@ -209,46 +209,53 @@ LINEのLIFFという仕組みは、「`https://liff.line.me/{LIFF ID}` という
 
    ```javascript
    function doPost(e) {
-     var body = JSON.parse(e.postData.contents);
-     var logType = body.logType; // "purchase_clicks" / "source_link_clicks" / "conversions" / "events" / "friends"
-     var headers = body.headers; // 列見出しの配列
-     var rows = body.rows; // 行データの配列(各行は文字列の配列)
-     var writeMode = body.writeMode || "append"; // "append" / "overwrite" / "cell"
-     var startCell = body.startCell; // writeMode === "cell" の場合のみ、例: "B3"
-
-     // spreadsheetIdの指定があればそのスプレッドシートを開く。無ければこのスクリプトが
-     // バインドされているスプレッドシート(コンテナバインド)をそのまま使う。
-     var ss = body.spreadsheetId ? SpreadsheetApp.openById(body.spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
-     var sheetName = body.sheetName || logType;
-     var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
-
-     if (writeMode === "overwrite") {
-       sheet.clearContents();
-       sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
-       if (rows.length > 0) {
-         sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+     try {
+       var body = JSON.parse(e.postData.contents);
+       var logType = body.logType; // "friends" / "purchase_clicks" / "source_link_clicks" / "conversions" / "event_logs"
+       var headers = body.headers; // 列見出しの配列
+       var rows = body.rows; // 行データの配列(各行は文字列の配列)
+       var writeMode = body.writeMode || "append"; // "append" / "overwrite" / "cell"
+       var startCell = body.startCell; // writeMode === "cell" の場合のみ、例: "B3"
+   
+       // spreadsheetIdの指定があればそのスプレッドシートを開く。無ければこのスクリプトが
+       // バインドされているスプレッドシート(コンテナバインド)をそのまま使う。
+       var ss = body.spreadsheetId ? SpreadsheetApp.openById(body.spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
+       var sheetName = body.sheetName || logType;
+       var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+   
+       if (writeMode === "overwrite") {
+         sheet.clearContents();
+         sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+         if (rows.length > 0) {
+           sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+         }
+       } else if (writeMode === "cell") {
+         var startRange = sheet.getRange(startCell);
+         var startRow = startRange.getRow();
+         var startCol = startRange.getColumn();
+         sheet.getRange(startRow, startCol, 1, headers.length).setValues([headers]);
+         if (rows.length > 0) {
+           sheet.getRange(startRow + 1, startCol, rows.length, headers.length).setValues(rows);
+         }
+       } else {
+         // append: シートが空の場合だけ見出し行を書き込み、その後ろにデータ行を追記する
+         if (sheet.getLastRow() === 0) {
+           sheet.appendRow(headers);
+         }
+         if (rows.length > 0) {
+           sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
+         }
        }
-     } else if (writeMode === "cell") {
-       var startRange = sheet.getRange(startCell);
-       var startRow = startRange.getRow();
-       var startCol = startRange.getColumn();
-       sheet.getRange(startRow, startCol, 1, headers.length).setValues([headers]);
-       if (rows.length > 0) {
-         sheet.getRange(startRow + 1, startCol, rows.length, headers.length).setValues(rows);
-       }
-     } else {
-       // append: シートが空の場合だけ見出し行を書き込み、その後ろにデータ行を追記する
-       if (sheet.getLastRow() === 0) {
-         sheet.appendRow(headers);
-       }
-       if (rows.length > 0) {
-         sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
-       }
+   
+       return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(
+         ContentService.MimeType.JSON
+       );
+     } catch (err) {
+       // 失敗した場合は、ツール側にエラー内容を返す
+       return ContentService.createTextOutput(JSON.stringify({ ok: false, error: String(err) })).setMimeType(
+         ContentService.MimeType.JSON
+       );
      }
-
-     return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(
-       ContentService.MimeType.JSON
-     );
    }
    ```
 
