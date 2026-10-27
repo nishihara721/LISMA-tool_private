@@ -116,10 +116,8 @@ function cells(r: TotalRow, withImpRate: boolean): string[] {
 }
 
 export default function MonthlySummaryPage() {
-  const [scope, setScope] = useState<"total" | "month">("total");
   const [fromMonth, setFromMonth] = useState(monthsAgoJST(5));
   const [toMonth, setToMonth] = useState(currentMonthJST());
-  const [singleMonth, setSingleMonth] = useState(currentMonthJST());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [shownLabel, setShownLabel] = useState("");
@@ -129,8 +127,8 @@ export default function MonthlySummaryPage() {
   async function fetchReport() {
     setLoading(true);
     setError("");
-    const from = scope === "total" ? fromMonth : singleMonth;
-    const to = scope === "total" ? toMonth : singleMonth;
+    const from = fromMonth;
+    const to = toMonth;
     try {
       // 3つの集計を1回の問い合わせでまとめて取得する
       const res = await fetch(`/api/report/monthly-summary?fromMonth=${from}&toMonth=${to}`);
@@ -138,7 +136,7 @@ export default function MonthlySummaryPage() {
       if (!res.ok) throw new Error(json.error ?? "取得に失敗しました");
       const results = SECTIONS.map((sec) => [sec.key, (sec.key === "monthly" ? buildMonthlyTotals((json.monthly ?? []) as ApiRow[]) : buildTotals((json[sec.key] ?? []) as ApiRow[], sec.field))] as const);
       setData(Object.fromEntries(results));
-      setShownLabel(scope === "total" ? `${formatMonthLabel(fromMonth)}〜${formatMonthLabel(toMonth)}の合計` : `${formatMonthLabel(singleMonth)}`);
+      setShownLabel(`${formatMonthLabel(fromMonth)}〜${formatMonthLabel(toMonth)}の合計`);
       setLoaded(true);
     } catch (e) {
       setError(String(e));
@@ -168,49 +166,26 @@ export default function MonthlySummaryPage() {
     URL.revokeObjectURL(url);
   }
 
-  const radio = (value: "total" | "month", label: string) => (
-    <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", fontSize: 14 }}>
-      <input type="radio" name="summary-scope" value={value} checked={scope === value} onChange={() => setScope(value)} />
-      {label}
-    </label>
-  );
-
   return (
     <main style={ui.pageWide}>
       <h1 style={ui.h1}>サマリ</h1>
 
       <div style={{ ...ui.filterBar, alignItems: "flex-end" }}>
         <div style={ui.filterField}>
-          <label style={ui.filterLabel}>表示する範囲</label>
-          <div role="radiogroup" aria-label="表示する範囲" style={{ display: "flex", gap: 18, height: 34, alignItems: "center" }}>
-            {radio("total", "期間合計")}
-            {radio("month", "特定の月")}
-          </div>
+          <label style={ui.filterLabel}>期間(開始月)</label>
+          <input type="month" style={ui.filterInput} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} />
         </div>
-        {scope === "total" ? (
-          <>
-            <div style={ui.filterField}>
-              <label style={ui.filterLabel}>期間(開始月)</label>
-              <input type="month" style={ui.filterInput} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} />
-            </div>
-            <div style={ui.filterField}>
-              <label style={ui.filterLabel}>期間(終了月)</label>
-              <input type="month" style={ui.filterInput} value={toMonth} onChange={(e) => setToMonth(e.target.value)} />
-            </div>
-          </>
-        ) : (
-          <div style={ui.filterField}>
-            <label style={ui.filterLabel}>対象月</label>
-            <input type="month" style={ui.filterInput} value={singleMonth} onChange={(e) => setSingleMonth(e.target.value)} />
-          </div>
-        )}
+        <div style={ui.filterField}>
+          <label style={ui.filterLabel}>期間(終了月)</label>
+          <input type="month" style={ui.filterInput} value={toMonth} onChange={(e) => setToMonth(e.target.value)} />
+        </div>
         <button type="button" style={ui.buttonPrimary} onClick={fetchReport} disabled={loading}>
           {loading ? "取得中…" : "表示"}
         </button>
       </div>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
-      {!loaded && !loading && <p style={{ fontSize: 13, color: "#6b7280" }}>範囲を選んで「表示」を押してください</p>}
+      {!loaded && !loading && <p style={{ fontSize: 13, color: "#6b7280" }}>期間を選んで「表示」を押してください</p>}
 
       {loaded &&
         SECTIONS.map((sec) => {

@@ -245,7 +245,9 @@ const sourceLinkClicks: Def = {
           : c.userId
             ? "(記録なし)"
             : "(未特定)";
-      const clicked = c.sourceNameAtClick ?? sourceNameOf(c.sourceId, ctx.sourceMap);
+      // 流入経路名は現在の名前で表示する(あとから名前を変更すると、過去のクリックの表示も変わる)。
+      // 流入経路が削除済みで名前を引けない場合だけ、クリック時点で控えた名前を使う。
+      const clicked = ctx.sourceMap.has(c.sourceId) ? sourceNameOf(c.sourceId, ctx.sourceMap) : (c.sourceNameAtClick ?? sourceNameOf(c.sourceId, ctx.sourceMap));
       const status = c.statusAtClick ? STATUS_LABELS[c.statusAtClick] : "(記録なし)";
       return {
         id,
