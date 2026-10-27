@@ -6,6 +6,7 @@ import type { PurchaseLinkDoc } from "@/types";
 import * as ui from "../ui";
 import RowMenu from "../RowMenu";
 import Pager from "../Pager";
+import PurchaseLinkImportPanel from "./PurchaseLinkImportPanel";
 import { buildPurchaseLinkName, ordinal } from "@/lib/purchase-link-name";
 
 type EditFields = {
@@ -200,6 +201,8 @@ export default function PurchaseLinksAdminPage() {
           ＋ 新規登録
         </Link>
       </div>
+
+      <PurchaseLinkImportPanel onImported={fetchLinks} />
 
       <div style={ui.tableScroll}>
         <table style={ui.table} className="admin-table">

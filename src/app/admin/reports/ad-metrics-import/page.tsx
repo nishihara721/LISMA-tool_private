@@ -72,7 +72,7 @@ function ImportHistory({ endpoint, reloadKey }: { endpoint: string; reloadKey: n
         {historyError && <p style={{ fontSize: 12.5, color: "#c0392b" }}>{historyError}</p>}
         {undoMessage && <p style={{ fontSize: 12.5, margin: "0 0 8px", lineHeight: 1.7 }}>{undoMessage}</p>}
         {history.length === 0 && !historyError ? (
-          <p style={{ fontSize: 12.5, color: "#6b7280" }}>取り込み履歴はまだありません(この機能の追加後に取り込んだものが対象です)。</p>
+          <p style={{ fontSize: 12.5, color: "#6b7280" }}>取り込み履歴はまだありません。</p>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table style={{ borderCollapse: "collapse", fontSize: 12.5, width: "100%" }}>
