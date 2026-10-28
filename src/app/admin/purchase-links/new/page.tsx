@@ -135,7 +135,7 @@ export default function NewPurchaseLinkPage() {
             placeholder="例: 2001234567-AbCdEfGh"
           />
           <p style={ui.hint}>
-            事前にLINE Developersコンソールで、上記の遷移先URLを「エンドポイントURL」として登録したLIFFアプリを作成し、そのIDを入力してください(README参照)。
+            事前にLINE Developersコンソールで、上記の遷移先URLを「エンドポイントURL」として登録したLIFFアプリを作成し、そのIDを入力してください。
           </p>
         </div>
         <button style={ui.buttonPrimary} onClick={handleCreate} disabled={busy}>

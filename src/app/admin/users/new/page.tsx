@@ -60,7 +60,7 @@ export default function NewAdminUserPage() {
             value={loginId}
             onChange={(e) => setLoginId(e.target.value)}
             autoFocus
-            placeholder="例: chihiro"
+            placeholder="例: abc12345"
           />
         </div>
         <div style={ui.field}>

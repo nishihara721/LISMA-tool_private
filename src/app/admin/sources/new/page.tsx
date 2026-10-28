@@ -68,7 +68,7 @@ export default function NewSourcePage() {
       <section style={ui.section}>
         <div style={ui.field}>
           <label style={ui.label}>設置先</label>
-          <input style={ui.input} value={placement} onChange={(e) => setPlacement(e.target.value)} autoFocus placeholder="例: LP上部" />
+          <input style={ui.input} value={placement} onChange={(e) => setPlacement(e.target.value)} autoFocus placeholder="例: LP" />
         </div>
         <div style={ui.field}>
           <label style={ui.label}>訴求</label>
@@ -76,11 +76,11 @@ export default function NewSourcePage() {
         </div>
         <div style={ui.field}>
           <label style={ui.label}>ポップアップ</label>
-          <input style={ui.input} value={popup} onChange={(e) => setPopup(e.target.value)} placeholder="例: ポップアップA" />
+          <input style={ui.input} value={popup} onChange={(e) => setPopup(e.target.value)} placeholder="例: p01" />
         </div>
         <div style={ui.field}>
           <label style={ui.label}>シナリオ</label>
-          <input style={ui.input} value={scenario} onChange={(e) => setScenario(e.target.value)} placeholder="例: シナリオ1" />
+          <input style={ui.input} value={scenario} onChange={(e) => setScenario(e.target.value)} placeholder="例: s01" />
         </div>
         <div style={ui.field}>
           <label style={ui.label}>離脱地点</label>
@@ -88,7 +88,7 @@ export default function NewSourcePage() {
             style={ui.input}
             value={exitPoint}
             onChange={(e) => setExitPoint(e.target.value)}
-            placeholder="例: 離脱ポイントA"
+            placeholder="例: ボット離脱"
           />
         </div>
         <div style={ui.field}>
@@ -97,7 +97,7 @@ export default function NewSourcePage() {
             style={ui.input}
             value={intermediatePage}
             onChange={(e) => setIntermediatePage(e.target.value)}
-            placeholder="例: 中間ページ2"
+            placeholder="例: 中間05"
           />
         </div>
         <div style={ui.field}>
