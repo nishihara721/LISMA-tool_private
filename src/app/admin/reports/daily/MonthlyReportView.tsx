@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatYen } from "@/lib/format-yen";
 import * as ui from "../../ui";
+import FilterPanel from "../../FilterPanel";
 import { currentMonthJST, monthsAgoJST } from "@/lib/csv-client";
 import { formatMonthLabel } from "@/lib/monthly-totals";
 
@@ -105,7 +106,7 @@ export default function MonthlyReportView({ modeSwitch }: { modeSwitch?: React.R
       <h1 style={ui.h1}>日次・月次レポート</h1>
       {modeSwitch}
 
-      <div style={ui.filterBar}>
+      <FilterPanel>
         <div style={ui.filterField}>
           <label style={ui.filterLabel}>期間(開始月)</label>
           <input type="month" style={ui.filterInput} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} />
@@ -117,7 +118,7 @@ export default function MonthlyReportView({ modeSwitch }: { modeSwitch?: React.R
         <button type="button" style={ui.buttonPrimary} onClick={fetchReport} disabled={loading}>
           {loading ? "取得中…" : "表示"}
         </button>
-      </div>
+      </FilterPanel>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

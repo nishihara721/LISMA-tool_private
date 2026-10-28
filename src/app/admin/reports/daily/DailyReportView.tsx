@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { formatYen } from "@/lib/format-yen";
 import * as ui from "../../ui";
+import FilterPanel from "../../FilterPanel";
 import { EditPencilIcon } from "../../icons";
 import { daysAgoJST, todayJST } from "@/lib/csv-client";
 import { useCanEditReports } from "../../CurrentUserContext";
@@ -187,7 +188,7 @@ export default function DailyReportView({ modeSwitch }: { modeSwitch?: React.Rea
       <h1 style={ui.h1}>日次・月次レポート</h1>
       {modeSwitch}
 
-      <div style={ui.filterBar}>
+      <FilterPanel>
         <div style={ui.filterField}>
           <label style={ui.filterLabel}>期間(開始)</label>
           <input type="date" style={ui.filterInput} value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -199,7 +200,7 @@ export default function DailyReportView({ modeSwitch }: { modeSwitch?: React.Rea
         <button type="button" style={ui.buttonPrimary} onClick={fetchReport} disabled={loading}>
           {loading ? "取得中…" : "表示"}
         </button>
-      </div>
+      </FilterPanel>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

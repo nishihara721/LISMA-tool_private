@@ -3,6 +3,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { formatYen } from "@/lib/format-yen";
 import * as ui from "../../ui";
+import FilterPanel from "../../FilterPanel";
 import { useCanEditReports } from "../../CurrentUserContext";
 import { EditPencilIcon } from "../../icons";
 import { buildMonthlyDisplayItems, formatMonthLabel, type MonthlyDisplayItem } from "@/lib/monthly-totals";
@@ -217,7 +218,7 @@ export default function DailyReportByPopupPage() {
     <main style={ui.pageWide}>
       <h1 style={ui.h1}>ポップアップ別</h1>
 
-      <div style={ui.filterBar}>
+      <FilterPanel>
         <div style={ui.filterField}>
           <label style={ui.filterLabel}>期間(開始)</label>
           <input type="date" style={ui.filterInput} value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -229,7 +230,7 @@ export default function DailyReportByPopupPage() {
         <button type="button" style={ui.buttonPrimary} onClick={fetchReport} disabled={loading}>
           {loading ? "取得中…" : "表示"}
         </button>
-      </div>
+      </FilterPanel>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
 

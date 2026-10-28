@@ -3,12 +3,12 @@
 import type { CSSProperties } from "react";
 
 export const page: CSSProperties = {
-  padding: "32px 40px",
+  padding: "32px clamp(16px, 4vw, 40px)",
   maxWidth: 960,
 };
 
 export const pageWide: CSSProperties = {
-  padding: "32px 40px",
+  padding: "32px clamp(16px, 4vw, 40px)",
 };
 
 export const h1: CSSProperties = {
@@ -37,6 +37,7 @@ export const headerRow: CSSProperties = {
   display: "flex",
   alignItems: "center",
   justifyContent: "flex-start",
+  flexWrap: "wrap",
   gap: 16,
   marginBottom: 24,
 };

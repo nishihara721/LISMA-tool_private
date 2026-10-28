@@ -28,7 +28,7 @@ const mod = { exports: {} };
 new Function("module", "exports", compiled)(mod, mod.exports);
 const GROUPS = mod.exports.MANUAL_GROUPS;
 
-const SITE_TITLE = "LINE友だち管理ツール マニュアル";
+const SITE_TITLE = "engageツール マニュアル";
 
 const esc = (s) =>
   String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -129,7 +129,7 @@ function sectionPage(section, index) {
 function indexPage() {
   const body = [
     `<h1>${esc(SITE_TITLE)}</h1>`,
-    `<p class="summary">LINE友だち管理ツールの各画面の説明と使い方をまとめたマニュアルです。見たい画面を下の一覧から選んでください。</p>`,
+    `<p class="summary">engageツールの各画面の説明と使い方をまとめたマニュアルです。見たい画面を下の一覧から選んでください。</p>`,
     ...GROUPS.map(
       (g) => `<section class="index-group">
   <h2><a href="${g.id}/index.html">${esc(g.title)}</a></h2>

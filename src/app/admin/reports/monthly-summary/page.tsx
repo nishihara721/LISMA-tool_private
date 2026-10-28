@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import * as ui from "../../ui";
+import FilterPanel from "../../FilterPanel";
 import { currentMonthJST, monthsAgoJST } from "@/lib/csv-client";
 import { formatMonthLabel } from "@/lib/monthly-totals";
 import { formatYen } from "@/lib/format-yen";
@@ -170,7 +171,7 @@ export default function MonthlySummaryPage() {
     <main style={ui.pageWide}>
       <h1 style={ui.h1}>サマリ</h1>
 
-      <div style={{ ...ui.filterBar, alignItems: "flex-end" }}>
+      <FilterPanel style={{ alignItems: "flex-end" }}>
         <div style={ui.filterField}>
           <label style={ui.filterLabel}>期間(開始月)</label>
           <input type="month" style={ui.filterInput} value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} />
@@ -182,7 +183,7 @@ export default function MonthlySummaryPage() {
         <button type="button" style={ui.buttonPrimary} onClick={fetchReport} disabled={loading}>
           {loading ? "取得中…" : "表示"}
         </button>
-      </div>
+      </FilterPanel>
 
       {error && <p style={{ color: "#c0392b", fontSize: 13 }}>{error}</p>}
       {!loaded && !loading && <p style={{ fontSize: 13, color: "#6b7280" }}>期間を選んで「表示」を押してください</p>}

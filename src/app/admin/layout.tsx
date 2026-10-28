@@ -48,7 +48,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         items={navItems}
         user={{ loginId: session.loginId, displayName: session.displayName, role: session.role }}
       />
-      <main style={{ flex: 1, minWidth: 0, position: "relative" }}>
+      <main className="admin-main" style={{ flex: 1, minWidth: 0, position: "relative" }}>
         <ManualButton role={session.role} />
         <CurrentUserProvider role={session.role}>{children}</CurrentUserProvider>
       </main>

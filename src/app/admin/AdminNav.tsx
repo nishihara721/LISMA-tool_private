@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { isAdminPageGroup, manualBaseUrl, MANUAL_URL, type AdminNavEntry } from "@/lib/admin-pages";
+import { NAV_ICON_BY_GROUP, NAV_ICON_BY_PATH, NavIcon } from "./icons";
 
 type CurrentUser = {
   loginId: string;
@@ -15,10 +16,26 @@ type CurrentUser = {
 // サイドメニューの描画・ホバー展開・ログアウトを担当するクライアントコンポーネント。
 // どのページを表示するか(権限によるフィルタ)はサーバーコンポーネント側(layout.tsx)で決めて、
 // フィルタ済みのitemsをpropsで受け取る。
+//
+// PC幅の構成: 左に「親メニューだけ」を並べた細い列(アイコンだけ)があり、
+// 列にマウスを乗せると、名前とログイン中のユーザー名が見えるように横へ広がる(ページの上に重ねて表示)。
+// 親メニューにマウスを乗せると、さらに右に子メニューの一覧(パネル)が開く。
+// パネルはページの上に重ねて表示し、マウスが外れたら閉じる(ページ本体は動かさない)。
+// スマホ幅では、従来どおり画面左から開くメニューに、親メニューと子メニューをすべて並べる。
 export default function AdminNav({ items, user }: { items: AdminNavEntry[]; user: CurrentUser }) {
   const pathname = usePathname();
   const router = useRouter();
   const [loggingOut, setLoggingOut] = useState(false);
+  // スマホ幅では、サイドメニューを画面左から開閉するメニュー(ハンバーガーボタンで開く)にする
+  const [menuOpen, setMenuOpen] = useState(false);
+  // マウスを乗せている(またはタップした)親メニュー。子メニューのパネルに表示する
+  const [hovered, setHovered] = useState<string | null>(null);
+
+  // ページを移動したら、メニューを閉じる
+  useEffect(() => {
+    setMenuOpen(false);
+    setHovered(null);
+  }, [pathname]);
 
   async function handleLogout() {
     setLoggingOut(true);
@@ -31,68 +48,65 @@ export default function AdminNav({ items, user }: { items: AdminNavEntry[]; user
     }
   }
 
+  // 子メニューのパネルは、親メニューにマウスを乗せている間だけ開く(外れたら閉じて、ページ本体を隠さない)
+  const shown = hovered;
+
   return (
+    <>
+    <div className="admin-topbar">
+      <button type="button" className="admin-hamburger" aria-label="メニューを開く" aria-expanded={menuOpen} onClick={() => setMenuOpen((v) => !v)}>
+        <span aria-hidden>☰</span>
+      </button>
+      <span className="admin-topbar-title">engageツール</span>
+    </div>
+    {menuOpen && <div className="admin-backdrop" onClick={() => setMenuOpen(false)} aria-hidden />}
     <aside
-      style={{
-        width: 232,
-        flexShrink: 0,
-        background: "#eef3f6",
-        borderRight: "1px solid #dde5ea",
-        padding: "28px 0",
-        display: "flex",
-        flexDirection: "column",
-      }}
+      className={`admin-aside${menuOpen ? " admin-aside--open" : ""}`}
+      onMouseLeave={() => setHovered(null)}
     >
-      <div style={{ padding: "0 24px 24px", fontWeight: 600, fontSize: 15, color: "#33474f" }}>
-        LINE友だち管理ツール
+      <div className="admin-rail">
+      <div className="admin-nav-head">
+        <span className="admin-nav-title">
+          engage
+          <br className="admin-nav-br" />
+          ツール
+        </span>
       </div>
-      <nav style={{ flex: 1 }}>
+      <nav className="admin-nav-list">
         {items.map((item) => {
           if (isAdminPageGroup(item)) {
-            // 配下の項目は普段は隠しておき、見出しにマウスを乗せた時だけ展開する(CSSの:hoverで制御)。
-            // ただし配下のページを表示中は、ホバーしていなくても展開したままにする。
             const hasActiveChild = item.children.some((child) => pathname === child.path);
+            const isShown = shown === item.label;
+            const icon = NAV_ICON_BY_GROUP[item.label];
             return (
               <div
                 key={item.label}
-                className={`admin-nav-group${hasActiveChild ? " admin-nav-group--active" : ""}`}
-                style={{ padding: 0 }}
+                className={`admin-nav-group${isShown ? " admin-nav-group--shown" : ""}${hasActiveChild ? " admin-nav-group--active" : ""}`}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 5,
-                    padding: "11px 24px",
-                    fontSize: 13.5,
-                    color: "#33474f",
-                    cursor: "default",
-                  }}
+                <button
+                  type="button"
+                  className="admin-nav-item admin-nav-group-head"
+                  aria-expanded={isShown}
+                  title={item.label}
+                  onMouseEnter={() => setHovered(item.label)}
+                  onFocus={() => setHovered(item.label)}
+                  onClick={() => setHovered(item.label)}
                 >
-                  {item.label}
-                  <span className="admin-nav-group-arrow" style={{ fontSize: 11, color: "#9aacb2" }}>
-                    ∨
-                  </span>
-                </div>
-                <div
-                  className={`admin-nav-group-children${hasActiveChild ? " admin-nav-group-children--open" : ""}`}
-                >
+                  {icon && <NavIcon name={icon} size={22} />}
+                  <span className="admin-nav-item-label">{item.label}</span>
+                </button>
+                {/* 子メニュー。PCでは親メニューの右に開くパネル、スマホでは親メニューの下に並べる */}
+                <div className="admin-nav-panel">
+                  <div className="admin-nav-panel-head">
+                    <span className="admin-nav-panel-title">{item.label}</span>
+                  </div>
                   {item.children.map((child) => {
                     const active = pathname === child.path;
                     return (
                       <Link
                         key={child.path}
                         href={child.path}
-                        style={{
-                          display: "block",
-                          padding: "9px 24px 9px 36px",
-                          fontSize: 13.5,
-                          textDecoration: "none",
-                          color: active ? "#ffffff" : "#33474f",
-                          background: active ? "#7bb8d4" : "transparent",
-                          borderLeft: active ? "none" : "2px solid #dde5ea",
-                          marginLeft: 24,
-                        }}
+                        className={`admin-nav-child${active ? " admin-nav-child--active" : ""}`}
                       >
                         {child.label}
                       </Link>
@@ -104,6 +118,13 @@ export default function AdminNav({ items, user }: { items: AdminNavEntry[]; user
           }
 
           const active = pathname === item.path;
+          const icon = NAV_ICON_BY_PATH[item.path];
+          const inner = (
+            <>
+              {icon && <NavIcon name={icon} size={22} />}
+              <span className="admin-nav-item-label">{item.label}</span>
+            </>
+          );
           if (item.externalUrl) {
             // 別URLのマニュアルを新しいタブで開く
             return (
@@ -112,9 +133,11 @@ export default function AdminNav({ items, user }: { items: AdminNavEntry[]; user
                 href={user.role === "report_viewer" && item.externalUrl === MANUAL_URL ? manualBaseUrl(user.role) : item.externalUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                style={{ display: "block", padding: "11px 24px", fontSize: 13.5, textDecoration: "none", color: "#33474f" }}
+                title={item.label}
+                className="admin-nav-item"
+                onMouseEnter={() => setHovered(null)}
               >
-                {item.label}
+                {inner}
               </a>
             );
           }
@@ -122,42 +145,37 @@ export default function AdminNav({ items, user }: { items: AdminNavEntry[]; user
             <Link
               key={item.path}
               href={item.path}
-              style={{
-                display: "block",
-                padding: "11px 24px",
-                fontSize: 13.5,
-                textDecoration: "none",
-                color: active ? "#ffffff" : "#33474f",
-                background: active ? "#7bb8d4" : "transparent",
-              }}
+              title={item.label}
+              className={`admin-nav-item${active ? " admin-nav-item--active" : ""}`}
+              onMouseEnter={() => setHovered(null)}
             >
-              {item.label}
+              {inner}
             </Link>
           );
         })}
       </nav>
-      <div style={{ padding: "16px 24px 0", borderTop: "1px solid #dde5ea" }}>
-        <div style={{ fontSize: 12.5, color: "#6b7f87", marginBottom: 4 }}>
-          {user.displayName}({user.loginId})
-        </div>
-        <div style={{ fontSize: 11.5, color: "#9aacb2", marginBottom: 10 }}>
-          {user.role === "admin" ? "管理者権限" : "レポート閲覧権限"}
+      <div className="admin-nav-foot" onMouseEnter={() => setHovered(null)}>
+        <div className="admin-nav-userinfo">
+          <div style={{ fontSize: 12.5, color: "#6b7f87", marginBottom: 4 }}>
+            {user.displayName}({user.loginId})
+          </div>
+          <div style={{ fontSize: 11.5, color: "#9aacb2", marginBottom: 10 }}>
+            {user.role === "admin" ? "管理者権限" : "レポート閲覧権限"}
+          </div>
         </div>
         <button
+          type="button"
+          className="admin-nav-logout"
           onClick={handleLogout}
           disabled={loggingOut}
-          style={{
-            fontSize: 12.5,
-            padding: "6px 12px",
-            borderRadius: 6,
-            border: "1px solid #c7d2d6",
-            background: "#ffffff",
-            color: "#33474f",
-          }}
+          title={`ログアウト(${user.displayName}・${user.role === "admin" ? "管理者権限" : "レポート閲覧権限"})`}
         >
-          ログアウト
+          <NavIcon name="exit" size={20} />
+          <span className="admin-nav-item-label">ログアウト</span>
         </button>
       </div>
+      </div>
     </aside>
+    </>
   );
 }

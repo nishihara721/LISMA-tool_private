@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as ui from "../ui";
+import FilterPanel from "../FilterPanel";
 import MultiSelect from "../MultiSelect";
 import Pager from "../Pager";
 import { useCanEditReports } from "../CurrentUserContext";
@@ -393,7 +394,7 @@ export default function LogTable({
 
   return (
     <>
-      <div style={ui.filterBar}>
+      <FilterPanel>
         {filters.map((f) => {
           const st = filterState[f.key];
           if (f.type === "text") {
@@ -461,7 +462,7 @@ export default function LogTable({
             全期間を表示
           </button>
         )}
-      </div>
+      </FilterPanel>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
         <p style={{ ...ui.filterResultCount, margin: 0 }}>{loading ? "読み込み中…" : `${rows.length}件表示`}</p>

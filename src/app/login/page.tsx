@@ -52,12 +52,14 @@ function LoginForm() {
         alignItems: "center",
         justifyContent: "center",
         background: "#f7f9fb",
+        padding: "24px 16px",
       }}
     >
       <form
         onSubmit={handleSubmit}
         style={{
           width: 340,
+          maxWidth: "100%",
           background: "#ffffff",
           border: "1px solid #e5e7eb",
           borderRadius: 10,

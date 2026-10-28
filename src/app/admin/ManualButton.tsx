@@ -8,11 +8,13 @@ import type { AdminRole } from "@/lib/session";
 export default function ManualButton({ role }: { role: AdminRole }) {
   const pathname = usePathname();
   return (
-    <div style={{ position: "absolute", top: 34, right: 40, zIndex: 5 }}>
+    <div className="admin-manual-btn" style={{ position: "absolute", top: 34, right: 40, zIndex: 5 }}>
       <a
         href={manualUrlFor(pathname, role)}
         target="_blank"
         rel="noopener noreferrer"
+        aria-label="このページのマニュアル"
+        title="このページのマニュアル"
         style={{
           display: "inline-flex",
           alignItems: "center",
@@ -43,7 +45,7 @@ export default function ManualButton({ role }: { role: AdminRole }) {
         >
           ?
         </span>
-        このページのマニュアル
+        <span className="admin-manual-label">このページのマニュアル</span>
       </a>
     </div>
   );

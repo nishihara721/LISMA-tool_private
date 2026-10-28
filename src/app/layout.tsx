@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "LINE友だち管理ツール",
+  title: "engageツール",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
