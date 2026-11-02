@@ -4,10 +4,11 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import * as ui from "../../ui";
-import { buildPurchaseLinkName, ordinal } from "@/lib/purchase-link-name";
+import { buildPurchaseLinkName, scenarioLabel, type ScenarioKind } from "@/lib/purchase-link-name";
 
 export default function NewPurchaseLinkPage() {
   const router = useRouter();
+  const [scenarioKind, setScenarioKind] = useState<ScenarioKind>("new");
   const [scenarioNumber, setScenarioNumber] = useState("");
   const [messageCount, setMessageCount] = useState("");
   const [other, setOther] = useState("");
@@ -17,7 +18,12 @@ export default function NewPurchaseLinkPage() {
   const [busy, setBusy] = useState(false);
 
   const scenarioNum = scenarioNumber.trim() === "" ? undefined : Number(scenarioNumber);
-  const scenarioText = typeof scenarioNum === "number" && !Number.isNaN(scenarioNum) ? ordinal(scenarioNum) : undefined;
+  // リマーケティングは、1以上の整数のみ(r01, r12, r142)
+  const scenarioValid =
+    scenarioNum === undefined ||
+    (!Number.isNaN(scenarioNum) && (scenarioKind === "new" || (Number.isInteger(scenarioNum) && scenarioNum >= 1)));
+  const scenarioText =
+    typeof scenarioNum === "number" && !Number.isNaN(scenarioNum) && scenarioValid ? scenarioLabel(scenarioKind, scenarioNum) : undefined;
   const messageCountNum = messageCount.trim() === "" ? undefined : Number(messageCount);
   const previewName = buildPurchaseLinkName({ scenario: scenarioText, messageCount: messageCountNum, other });
 
@@ -26,8 +32,8 @@ export default function NewPurchaseLinkPage() {
       alert("いずれかの項目を入力してください");
       return;
     }
-    if (scenarioNumber.trim() !== "" && Number.isNaN(scenarioNum)) {
-      alert("シナリオは数値で入力してください");
+    if (!scenarioValid) {
+      alert(scenarioKind === "remarketing" ? "リマーケティングのシナリオは、1以上の整数で入力してください" : "シナリオは数値で入力してください");
       return;
     }
     if (messageCount.trim() !== "" && Number.isNaN(messageCountNum)) {
@@ -76,15 +82,39 @@ export default function NewPurchaseLinkPage() {
       <section style={ui.section}>
         <div style={ui.field}>
           <label style={ui.label}>シナリオ</label>
-          <input
-            type="number"
-            style={{ ...ui.input, maxWidth: 140 }}
-            value={scenarioNumber}
-            onChange={(e) => setScenarioNumber(e.target.value)}
-            autoFocus
-            placeholder="例: 1"
-          />
-          <p style={ui.hint}>数字だけ入力すると「{scenarioText ?? "1st"}」のように自動で表記が付きます。</p>
+          <div style={{ display: "flex", gap: 20, marginBottom: 8 }}>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, cursor: "pointer" }}>
+              <input type="radio" name="scenarioKind" checked={scenarioKind === "new"} onChange={() => setScenarioKind("new")} />
+              新規
+            </label>
+            <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 14, cursor: "pointer" }}>
+              <input
+                type="radio"
+                name="scenarioKind"
+                checked={scenarioKind === "remarketing"}
+                onChange={() => setScenarioKind("remarketing")}
+              />
+              リマーケティング
+            </label>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {scenarioKind === "remarketing" && <span style={{ fontSize: 15, color: "#374151" }}>r</span>}
+            <input
+              type="number"
+              min={scenarioKind === "remarketing" ? 1 : undefined}
+              step={scenarioKind === "remarketing" ? 1 : undefined}
+              style={{ ...ui.input, maxWidth: 140 }}
+              value={scenarioNumber}
+              onChange={(e) => setScenarioNumber(e.target.value)}
+              autoFocus
+              placeholder="例: 1"
+            />
+          </div>
+          <p style={ui.hint}>
+            {scenarioKind === "remarketing"
+              ? `数字だけ入力すると「${scenarioText ?? "r01"}」のように自動で表記が付きます(12なら「r12」、142なら「r142」)。`
+              : `数字だけ入力すると「${scenarioText ?? "1st"}」のように自動で表記が付きます。`}
+          </p>
         </div>
         <div style={ui.field}>
           <label style={ui.label}>通数</label>

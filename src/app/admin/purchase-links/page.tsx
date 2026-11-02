@@ -7,9 +7,10 @@ import * as ui from "../ui";
 import RowMenu from "../RowMenu";
 import Pager from "../Pager";
 import PurchaseLinkImportPanel from "./PurchaseLinkImportPanel";
-import { buildPurchaseLinkName, ordinal } from "@/lib/purchase-link-name";
+import { buildPurchaseLinkName, parseScenarioValue, scenarioLabel, type ScenarioKind } from "@/lib/purchase-link-name";
 
 type EditFields = {
+  scenarioKind: ScenarioKind;
   scenarioNumber: string;
   messageCount: string;
   other: string;
@@ -18,15 +19,7 @@ type EditFields = {
   liffId: string;
 };
 
-const EMPTY_EDIT: EditFields = { scenarioNumber: "", messageCount: "", other: "", unitPrice: "", destinationUrl: "", liffId: "" };
-
-// 既存の「シナリオ」表示値(例: "1st")から、編集欄に戻すための数値部分を取り出す。
-// 「1st」「2nd」のような序数表記以外(旧仕様の自由入力テキストなど)は数値化できないためnullを返す。
-function parseScenarioNumber(scenario: string | undefined): number | null {
-  if (!scenario) return null;
-  const m = scenario.match(/^(\d+)(st|nd|rd|th)$/i);
-  return m ? Number(m[1]) : null;
-}
+const EMPTY_EDIT: EditFields = { scenarioKind: "new", scenarioNumber: "", messageCount: "", other: "", unitPrice: "", destinationUrl: "", liffId: "" };
 
 export default function PurchaseLinksAdminPage() {
   const [links, setLinks] = useState<PurchaseLinkDoc[]>([]);
@@ -51,11 +44,13 @@ export default function PurchaseLinksAdminPage() {
 
   function startEdit(link: PurchaseLinkDoc) {
     setEditingId(link.purchaseLinkId);
-    const scenarioNum = parseScenarioNumber(link.scenario);
+    const parsed = parseScenarioValue(link.scenario);
+    const scenarioNum = parsed ? parsed.number : null;
     // 数値化できない古いシナリオ値(旧仕様の自由入力テキスト)は、中身を失わないよう
     // 「その他」に元の値を引き継いで編集できるようにする(流入経路の既存データ移行と同じ考え方)
     const legacyScenarioText = link.scenario && scenarioNum === null ? link.scenario : "";
     setEdit({
+      scenarioKind: parsed?.kind ?? "new",
       scenarioNumber: scenarioNum !== null ? String(scenarioNum) : "",
       messageCount: link.messageCount !== undefined ? String(link.messageCount) : "",
       other:
@@ -73,8 +68,14 @@ export default function PurchaseLinksAdminPage() {
   }
 
   const editScenarioNum = edit.scenarioNumber.trim() === "" ? undefined : Number(edit.scenarioNumber);
+  const editScenarioValid =
+    editScenarioNum === undefined ||
+    (!Number.isNaN(editScenarioNum) &&
+      (edit.scenarioKind === "new" || (Number.isInteger(editScenarioNum) && editScenarioNum >= 1)));
   const editScenarioText =
-    typeof editScenarioNum === "number" && !Number.isNaN(editScenarioNum) ? ordinal(editScenarioNum) : undefined;
+    typeof editScenarioNum === "number" && !Number.isNaN(editScenarioNum) && editScenarioValid
+      ? scenarioLabel(edit.scenarioKind, editScenarioNum)
+      : undefined;
 
   const editPreviewName = buildPurchaseLinkName({
     scenario: editScenarioText,
@@ -87,8 +88,8 @@ export default function PurchaseLinksAdminPage() {
       alert("いずれかの項目を入力してください");
       return;
     }
-    if (edit.scenarioNumber.trim() !== "" && Number.isNaN(editScenarioNum)) {
-      alert("シナリオは数値で入力してください");
+    if (!editScenarioValid) {
+      alert(edit.scenarioKind === "remarketing" ? "リマーケティングのシナリオは、1以上の整数で入力してください" : "シナリオは数値で入力してください");
       return;
     }
     const messageCountNum = edit.messageCount.trim() === "" ? undefined : Number(edit.messageCount);
@@ -265,17 +266,42 @@ export default function PurchaseLinksAdminPage() {
                           marginBottom: 12,
                         }}
                       >
-                        <label style={{ display: "block", fontSize: 12.5 }}>
+                        <div style={{ display: "block", fontSize: 12.5 }}>
                           <span style={{ display: "block", marginBottom: 3 }}>シナリオ(数値)</span>
-                          <input
-                            type="number"
-                            style={{ ...ui.input, width: "100%" }}
-                            value={edit.scenarioNumber}
-                            onChange={(e) => setEdit((v) => ({ ...v, scenarioNumber: e.target.value }))}
-                            autoFocus
-                            placeholder="例: 1"
-                          />
-                        </label>
+                          <div style={{ display: "flex", gap: 14, marginBottom: 5 }}>
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                              <input
+                                type="radio"
+                                name={`scenarioKind-${editingId}`}
+                                checked={edit.scenarioKind === "new"}
+                                onChange={() => setEdit((v) => ({ ...v, scenarioKind: "new" }))}
+                              />
+                              新規
+                            </label>
+                            <label style={{ display: "inline-flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                              <input
+                                type="radio"
+                                name={`scenarioKind-${editingId}`}
+                                checked={edit.scenarioKind === "remarketing"}
+                                onChange={() => setEdit((v) => ({ ...v, scenarioKind: "remarketing" }))}
+                              />
+                              リマーケティング
+                            </label>
+                          </div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                            {edit.scenarioKind === "remarketing" && <span style={{ fontSize: 14 }}>r</span>}
+                            <input
+                              type="number"
+                              min={edit.scenarioKind === "remarketing" ? 1 : undefined}
+                              step={edit.scenarioKind === "remarketing" ? 1 : undefined}
+                              style={{ ...ui.input, width: "100%" }}
+                              value={edit.scenarioNumber}
+                              onChange={(e) => setEdit((v) => ({ ...v, scenarioNumber: e.target.value }))}
+                              autoFocus
+                              placeholder="例: 1"
+                            />
+                          </div>
+                        </div>
                         <label style={{ display: "block", fontSize: 12.5 }}>
                           <span style={{ display: "block", marginBottom: 3 }}>通数(数値)</span>
                           <input

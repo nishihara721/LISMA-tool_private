@@ -25,6 +25,29 @@ export function ordinal(n: number): string {
   }
 }
 
+// シナリオの種類。「新規」は 1st・2nd…、「リマーケティング」は r01・r02…(100以上は r100・r142 のように桁が増える)で表記する。
+export type ScenarioKind = "new" | "remarketing";
+
+// リマーケティングのシナリオ表記。2桁に満たない場合は0で埋め(r01, r12)、3桁以上はそのまま(r142)。
+export function remarketingLabel(n: number): string {
+  return `r${String(n).padStart(2, "0")}`;
+}
+
+// 種類と数値から、シナリオの表示値を作る。
+export function scenarioLabel(kind: ScenarioKind, n: number): string {
+  return kind === "remarketing" ? remarketingLabel(n) : ordinal(n);
+}
+
+// 保存済みのシナリオ表示値("1st" / "r01")から、種類と数値を取り出す。どちらの形式でもなければ null。
+export function parseScenarioValue(scenario: string | undefined): { kind: ScenarioKind; number: number } | null {
+  if (!scenario) return null;
+  const o = scenario.match(/^(\d+)(st|nd|rd|th)$/i);
+  if (o) return { kind: "new", number: Number(o[1]) };
+  const r = scenario.match(/^r(\d+)$/i);
+  if (r) return { kind: "remarketing", number: Number(r[1]) };
+  return null;
+}
+
 // 空欄の要素をスキップしつつ、決まった順序で「_」区切りに結合する。
 // 通数は「500通目」のように単位を付けて分かりやすくする。
 export function buildPurchaseLinkName(parts: PurchaseLinkNameParts): string {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { nanoid } from "nanoid";
 import { adminDb } from "@/lib/firebase-admin";
 import { invalidateSettingsCache } from "@/lib/settings-cache";
-import { buildPurchaseLinkName, ordinal } from "@/lib/purchase-link-name";
+import { buildPurchaseLinkName, ordinal, remarketingLabel } from "@/lib/purchase-link-name";
 import type { PurchaseLinkDoc } from "@/types";
 
 export const maxDuration = 60;
@@ -31,6 +31,20 @@ function parseCount(v: string): number | null | undefined {
   return m ? Number(m[1]) : null;
 }
 
+// シナリオ列: 「1」「1st」(新規)→ 1st、「r01」「R12」「r142」(リマーケティング)→ r01 / r12 / r142。
+// 読めなければ null、空欄は undefined。
+function parseScenario(v: string): string | null | undefined {
+  const t = v.normalize("NFKC").replace(/[,\s]/g, "");
+  if (t === "") return undefined;
+  const r = t.match(/^r(\d+)$/i);
+  if (r) {
+    const n = Number(r[1]);
+    return n >= 1 ? remarketingLabel(n) : null;
+  }
+  const n = parseCount(v);
+  return typeof n === "number" ? ordinal(n) : (n as null | undefined);
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const rows = body?.rows as Row[] | undefined;
@@ -56,18 +70,18 @@ export async function POST(req: NextRequest) {
   const now = Date.now();
 
   rows.forEach((r, i) => {
-    const scenarioNum = parseCount(str(r?.scenario));
+    const scenarioText = parseScenario(str(r?.scenario));
     const messageCountNum = parseCount(str(r?.messageCount));
     const other = str(r?.other);
     const unitPriceText = str(r?.unitPrice).normalize("NFKC").replace(/[,\s円]/g, "");
     const destinationUrl = str(r?.destinationUrl);
     const liffId = str(r?.liffId);
 
-    if (scenarioNum === undefined && messageCountNum === undefined && !other && !unitPriceText && !destinationUrl && !liffId) {
+    if (scenarioText === undefined && messageCountNum === undefined && !other && !unitPriceText && !destinationUrl && !liffId) {
       empty++;
       return;
     }
-    if (scenarioNum === null || messageCountNum === null) {
+    if (scenarioText === null || messageCountNum === null) {
       invalidNumber++;
       return;
     }
@@ -80,7 +94,7 @@ export async function POST(req: NextRequest) {
       }
     }
     const name = buildPurchaseLinkName({
-      scenario: scenarioNum !== undefined ? ordinal(scenarioNum) : undefined,
+      scenario: scenarioText,
       messageCount: messageCountNum,
       other,
     });
@@ -100,7 +114,7 @@ export async function POST(req: NextRequest) {
     toCreate.push({
       purchaseLinkId: nanoid(8),
       name,
-      scenario: scenarioNum !== undefined ? ordinal(scenarioNum) : undefined,
+      scenario: scenarioText,
       messageCount: messageCountNum,
       other: other || undefined,
       unitPrice,

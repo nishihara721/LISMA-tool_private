@@ -12,7 +12,7 @@ export const MANUAL_URL = "https://lisma.jp/project/tool/manual";
 // 管理画面のページ(path)と、対応するマニュアルのページ(<グループID>/<項目ID>.html)の対応表。
 // 各ページ右上の「マニュアル」ボタンのリンク先に使う。配下のページ(例: /admin/sources/new)は、
 // 前方一致で最も長く一致するものを使う。ここに無いページは、マニュアルの目次へリンクする。
-// マニュアルのページを追加・変更したら(src/app/admin/manual/content.ts)、ここも合わせて更新すること。
+// マニュアルのページ(別サイトの manual-site)を追加・変更したら、ここも合わせて更新すること。
 const MANUAL_PAGE_MAP: { path: string; page: string }[] = [
   { path: "/admin/sources", page: "friends-sources/sources.html" },
   { path: "/admin/purchase-links", page: "friends-sources/purchase-links.html" },
