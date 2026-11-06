@@ -28,6 +28,7 @@ const MANUAL_PAGE_MAP: { path: string; page: string }[] = [
   { path: "/admin/reports/daily", page: "reports/daily.html" },
   { path: "/admin/reports/ad-metrics-import", page: "data/ad-metrics-import.html" },
   { path: "/admin/reports/cv-log", page: "data/cv-log.html" },
+  { path: "/admin/reports/sheet-export", page: "data/sheet-export.html" },
   { path: "/admin/users", page: "admin/users.html" },
 ];
 
@@ -83,6 +84,7 @@ export const ADMIN_NAV_ITEMS: AdminNavEntry[] = [
     children: [
       { path: "/admin/reports/ad-metrics-import", label: "データ取り込み" },
       { path: "/admin/reports/cv-log", label: "編集用成果ログ" },
+      { path: "/admin/reports/sheet-export", label: "レポートのスプシ送信" },
     ],
   },
   { path: "/admin/manual", label: "マニュアル", externalUrl: MANUAL_URL },

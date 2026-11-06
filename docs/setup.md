@@ -211,18 +211,29 @@ LINEのLIFFという仕組みは、「`https://liff.line.me/{LIFF ID}` という
    function doPost(e) {
      try {
        var body = JSON.parse(e.postData.contents);
-       var logType = body.logType; // "friends" / "purchase_clicks" / "source_link_clicks" / "conversions" / "event_logs"
-       var headers = body.headers; // 列見出しの配列
-       var rows = body.rows; // 行データの配列(各行は文字列の配列)
-       var writeMode = body.writeMode || "append"; // "append" / "overwrite" / "cell"
-       var startCell = body.startCell; // writeMode === "cell" の場合のみ、例: "B3"
-   
+       var writeMode = body.writeMode || "append"; // "append" / "overwrite" / "cell" / "merge"
+
        // spreadsheetIdの指定があればそのスプレッドシートを開く。無ければこのスクリプトが
        // バインドされているスプレッドシート(コンテナバインド)をそのまま使う。
        var ss = body.spreadsheetId ? SpreadsheetApp.openById(body.spreadsheetId) : SpreadsheetApp.getActiveSpreadsheet();
+
+       // 「蓄積モード」(レポートの一括スプレッドシート送信専用。後述)は、通常のログ出力とは
+       // データの形が異なるため、別の関数で処理する。
+       if (writeMode === "merge") {
+         mergeReportSheet(ss, body);
+         return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(
+           ContentService.MimeType.JSON
+         );
+       }
+
+       var logType = body.logType; // "friends" / "purchase_clicks" / "source_link_clicks" / "conversions" / "event_logs"
+       var headers = body.headers; // 列見出しの配列
+       var rows = body.rows; // 行データの配列(各行は文字列の配列)
+       var startCell = body.startCell; // writeMode === "cell" の場合のみ、例: "B3"
+
        var sheetName = body.sheetName || logType;
        var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
-   
+
        if (writeMode === "overwrite") {
          sheet.clearContents();
          sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
@@ -246,7 +257,7 @@ LINEのLIFFという仕組みは、「`https://liff.line.me/{LIFF ID}` という
            sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
          }
        }
-   
+
        return ContentService.createTextOutput(JSON.stringify({ ok: true })).setMimeType(
          ContentService.MimeType.JSON
        );
@@ -257,6 +268,493 @@ LINEのLIFFという仕組みは、「`https://liff.line.me/{LIFF ID}` という
        );
      }
    }
+
+   // 「蓄積モード」(レポートの一括スプレッドシート送信専用。日次・ポップアップ別等のレポートを、
+   // 日付をキーに追記・更新していく書き込み方法)。件数は多くても数千行程度までのため、都度1行ずつ
+   // 挿入・更新するのではなく、既存の内容をいったんメモリ上に読み込んでからマージし、シート全体を
+   // 書き直す方式にしている(数千行でも数秒で終わる)。
+   //
+   // body.metricHeaders: 指標の見出し配列(例: ["PV数","imp数",...])。日次レポート(デイリー)は
+   //                      請求額を含む10個、区分別の4レポートは請求額を含まない9個。
+   //                      常に「先頭5個=ポップアップ数値(PV数・imp数・imp率・CL数・CL率)、
+   //                      次の2個=LINE公式数値(友だち追加数・友だち追加率)、残り=成果(CV数・CVR・
+   //                      (デイリーのみ)請求額)」という並びで届く前提で、親項目の見出し・率の再計算を組み立てる
+   // body.groups: このリクエストに含まれる区分(ポップアップ名・シナリオ名等)の配列。
+   //              区分が無い(日次レポートのように区分が無い)場合は省略または空配列
+   // body.rows: [{ date: "2026-10-28", values: {...} または [...] }, ...]
+   //            区分がある場合は values は { 区分名: [指標の値...] } のオブジェクト、
+   //            区分が無い場合は values はそのまま [指標の値...] の配列
+   //
+   // 見出しは、区分がある場合は4行(1行目: 区分名(列を折りたたんだ時のアンカー用)、2行目: 「合計」
+   // (指標全体をまとめる親項目。区分名を表示)、3行目: 親項目(ポップアップ数値/LINE公式数値/成果)、
+   // 4行目: 指標名)、区分が無い(デイリー)場合は2行(1行目: 親項目、2行目: 指標名)になる。
+   // 親項目・「合計」は、該当する列の範囲を結合セルにして見やすくする。
+   //
+   // データ行には、指標の見出し行の直下に「累計」行(シートにある全期間の合計)を置き、
+   // さらに月が変わるごとに、その月の最後の日付行の直後に「◯年◯月合計」行(その月の合計。
+   // 今日時点でまだ月の途中であれば、そこまでの合計)を挿入する。率の指標(imp率・CL率・
+   // 友だち追加率・CVR)は、日々の%をそのまま平均するのではなく、分子・分母それぞれの合計から
+   // 比率を再計算する(例: 月のCVR = その月のCV数合計 ÷ その月の友だち追加数合計)。
+   // これらの集計行は、送信のたびに実際の日付行から作り直す(既存の集計行を読み込んで引き継ぐことはしない)。
+   function mergeReportSheet(ss, body) {
+     var sheetName = body.sheetName;
+     var metricHeaders = body.metricHeaders;
+     var groups = body.groups || [];
+     var grouped = groups.length > 0;
+     var sheet = ss.getSheetByName(sheetName) || ss.insertSheet(sheetName);
+     var headerRows = grouped ? 4 : 2;
+     var DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+     // A列の値を "YYYY-MM-DD" の文字列に揃える。日付の列(A列)は、セルの書式が「自動」のままだと、
+     // "2026-10-20"のような文字列を書き込んでもGoogleスプレッドシート側で勝手に日付型に変換されて
+     // しまうことがある(次に読み込んだ時、文字列ではなく日付オブジェクトになっていて日付として認識
+     // できなくなり、既存データが消えたように見える原因になる)。そのため後述の通り、書き込み直前に
+     // A列をプレーンテキスト書式に固定し直す(この関数自体では、過去にすでに日付型になってしまった
+     // 行があってもここで元の文字列に復元する)
+     function dateKeyOf(v) {
+       if (v instanceof Date) {
+         return Utilities.formatDate(v, ss.getSpreadsheetTimeZone(), "yyyy-MM-dd");
+       }
+       var s = String(v);
+       return DATE_PATTERN.test(s) ? s : null;
+     }
+
+     // 親項目の区切り(先頭から何個ずつか)。残りはすべて「成果」になる
+     var CAT1_COUNT = 5; // ポップアップ数値: PV数・imp数・imp率・CL数・CL率
+     var CAT2_COUNT = 2; // LINE公式数値: 友だち追加数・友だち追加率
+
+     // metricStart(1-indexed列番号。指標の先頭列)を受け取り、[{name, start, count}, ...] を返す
+     function categoryRanges(metricStart) {
+       var cat3Count = metricHeaders.length - CAT1_COUNT - CAT2_COUNT;
+       return [
+         { name: "ポップアップ数値", start: metricStart, count: CAT1_COUNT },
+         { name: "LINE公式数値", start: metricStart + CAT1_COUNT, count: CAT2_COUNT },
+         { name: "成果", start: metricStart + CAT1_COUNT + CAT2_COUNT, count: cat3Count },
+       ];
+     }
+
+     // 率の指標の位置([指標の0-indexed番号, 分子の番号, 分母の番号])。
+     // 指標の並びは常に[PV数,imp数,imp率,CL数,CL率,友だち追加数,友だち追加率,CV数,CVR,(請求額)]の前提
+     var RATE_DEFS = [
+       { idx: 2, num: 1, den: 0 }, // imp率 = imp数 ÷ PV数
+       { idx: 4, num: 3, den: 1 }, // CL率 = CL数 ÷ imp数
+       { idx: 6, num: 5, den: 3 }, // 友だち追加率 = 友だち追加数 ÷ CL数
+       { idx: 8, num: 7, den: 5 }, // CVR = CV数 ÷ 友だち追加数
+     ];
+     // 複数日分の指標配列をまとめて合計し、率の指標は分子・分母それぞれの合計から再計算する
+     function aggregateMetrics(metricsList) {
+       var n = metricHeaders.length;
+       var sums = new Array(n).fill(0);
+       metricsList.forEach(function (values) {
+         for (var i = 0; i < n; i++) {
+           if (typeof values[i] === "number") sums[i] += values[i];
+         }
+       });
+       var result = sums.slice();
+       RATE_DEFS.forEach(function (rd) {
+         if (rd.idx < n) {
+           result[rd.idx] = sums[rd.den] > 0 ? Math.round((sums[rd.num] / sums[rd.den]) * 1000) / 10 : "";
+         }
+       });
+       return result;
+     }
+
+     // この関数の内部では、率の指標(imp率・CL率・友だち追加率・CVR)は常に「25.5」のような
+     // パーセント表記の数値として扱う(送信元のアプリ側の形式に合わせている)。一方、Googleスプレッド
+     // シート側の標準的なパーセント形式(セルの書式を%にする)は、値そのものは「0.255」のような
+     // 分数(比率)で持ち、表示のときだけ100倍して「25.5%」と見せる、という逆の持ち方をする。
+     // 以前は、値はパーセント表記のまま(25.5)、書式だけ文字列として"%"を付けて見せる方法を
+     // 取っていたが、半角の%を書式に含めると、Sheets側がセルを「パーセント形式」のセルだと
+     // 内部的に認識してしまい、セルを編集しようとした時(数式バー等)だけ値が100倍された状態
+     // (2550%等)で表示される不具合があった。また、もしユーザーがスプレッドシート上で直接
+     // 「25.5%」のように手入力した場合、Sheets標準の挙動として値は分数(0.255)で保存されるため、
+     // 前回までの方式ではこの手入力データを正しく読み込めなかった(25.5倍の誤差が出ていた)。
+     // そのため、シートに書き込む直前にパーセント表記(25.5)を分数(0.255)に変換し、Sheets標準の
+     // パーセント書式(0.0%)を使うように変更した。これにより、手入力されたパーセント値とも
+     // 形式が一致し、正しく読み書きできるようになる
+     function toSheetPercentForm(values) {
+       var out = values.slice();
+       RATE_DEFS.forEach(function (rd) {
+         if (rd.idx < out.length && typeof out[rd.idx] === "number") out[rd.idx] = out[rd.idx] / 100;
+       });
+       return out;
+     }
+     function fromSheetPercentForm(values) {
+       var out = values.slice();
+       RATE_DEFS.forEach(function (rd) {
+         if (rd.idx < out.length && typeof out[rd.idx] === "number") out[rd.idx] = out[rd.idx] * 100;
+       });
+       return out;
+     }
+
+     // startCol(1-indexed、指標の先頭列)・numRows(指標のデータ行数)を受け取り、率の指標には
+     // Sheets標準のパーセント書式(0.0%)、請求額には"¥14,300"のように¥単位の表示形式を付ける。
+     // それ以外の数値の指標(PV数・imp数・CL数・友だち追加数・CV数)には、1000単位でカンマ区切り
+     // (#,##0)を付ける
+     function applyValueFormats(startCol, numRows) {
+       if (numRows <= 0) return;
+       var rateIdx = RATE_DEFS.map(function (rd) {
+         return rd.idx;
+       });
+       for (var i = 0; i < metricHeaders.length; i++) {
+         var col = startCol + i;
+         if (rateIdx.indexOf(i) !== -1) {
+           sheet.getRange(headerRows + 1, col, numRows, 1).setNumberFormat("0.0%");
+         } else if (i === 9) {
+           // 請求額(9番目、デイリーのみ)
+           sheet.getRange(headerRows + 1, col, numRows, 1).setNumberFormat('"¥"#,##0');
+         } else {
+           sheet.getRange(headerRows + 1, col, numRows, 1).setNumberFormat("#,##0");
+         }
+       }
+     }
+
+     // 1. 既存の見出し・データを読み込む(「累計」「◯年◯月合計」等の集計行は、都度作り直すため無視する)
+     var lastRow = sheet.getLastRow();
+     var lastCol = sheet.getLastColumn();
+     var existingGroups = []; // 既存の区分名(左から並んでいる順)
+     var existingData = {}; // 日付 -> { 区分名: [値...] } または 日付 -> [値...]
+     var existingMemo = {}; // 日付 -> メモ(デイリーのみ。スプシに手書きされた内容を、送信のたびに引き継ぐ)
+
+     if (lastRow >= headerRows && lastCol >= 1) {
+       if (grouped) {
+         var header1 = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+         var col = 2;
+         while (col <= lastCol) {
+           var labelCol = col + 1;
+           var name = header1[labelCol - 1];
+           if (name) existingGroups.push(String(name));
+           col = labelCol + metricHeaders.length + 1;
+         }
+         if (lastRow > headerRows) {
+           var dataRows = sheet.getRange(headerRows + 1, 1, lastRow - headerRows, lastCol).getValues();
+           dataRows.forEach(function (r) {
+             var date = dateKeyOf(r[0]);
+             if (!date) return;
+             var entry = {};
+             var c = 2;
+             existingGroups.forEach(function (g) {
+               var labelC = c + 1;
+               var metricsStart = labelC + 1; // 1-indexed列番号
+               entry[g] = fromSheetPercentForm(r.slice(metricsStart - 1, metricsStart - 1 + metricHeaders.length));
+               c = labelC + metricHeaders.length + 1;
+             });
+             existingData[date] = entry;
+           });
+         }
+       } else if (lastRow > headerRows) {
+         var dataRows2 = sheet.getRange(headerRows + 1, 1, lastRow - headerRows, lastCol).getValues();
+         dataRows2.forEach(function (r) {
+           var date = dateKeyOf(r[0]);
+           if (!date) return;
+           existingData[date] = fromSheetPercentForm(r.slice(1, 1 + metricHeaders.length));
+         });
+         // メモ列(請求額の右隣。デイリーのみ)は、スプシに直接手書きされる前提のため、
+         // 送信のたびに上書きしないよう、既存の内容を日付ごとに読み込んでおき、後で書き戻す
+         var memoCol = 2 + metricHeaders.length;
+         var memoRows = sheet.getRange(headerRows + 1, memoCol, lastRow - headerRows, 1).getValues();
+         memoRows.forEach(function (r, i) {
+           var date = dateKeyOf(dataRows2[i][0]);
+           if (date && r[0]) existingMemo[date] = r[0];
+         });
+       }
+     }
+
+     // 2. 新しい区分があれば、既存の区分の右側に追加する(今回のリクエストで見つかった順)
+     if (grouped) {
+       groups.forEach(function (g) {
+         if (existingGroups.indexOf(g) === -1) existingGroups.push(g);
+       });
+     }
+
+     // 3. 送られてきた行をマージする(同じ日付は値を上書き、無ければ新規)
+     body.rows.forEach(function (row) {
+       var date = row.date;
+       if (grouped) {
+         if (!existingData[date]) existingData[date] = {};
+         Object.keys(row.values).forEach(function (g) {
+           existingData[date][g] = row.values[g];
+         });
+       } else {
+         existingData[date] = row.values;
+       }
+     });
+
+     // 4. 日付の昇順に並べ、「累計」「◯年◯月合計」の挿入位置を決める
+     //    (新しく追加された区分の列は、過去の日付の行では自動的に空欄になる。0埋めはしない)
+     var dates = Object.keys(existingData).sort();
+     var datesByMonth = {}; // "2026-10" -> [日付, ...](昇順)
+     dates.forEach(function (d) {
+       var ym = d.slice(0, 7);
+       if (!datesByMonth[ym]) datesByMonth[ym] = [];
+       datesByMonth[ym].push(d);
+     });
+
+     // 出力する行の並び。「累計」は先頭(見出しの直下)、「◯年◯月合計」はその月の最後の日付行の直後
+     // (今日時点でまだ月の途中であれば、シートにある最後の日付の直後。つまりdatesの末尾でも発生する)
+     var rowPlan = [{ type: "total" }];
+     dates.forEach(function (d, i) {
+       rowPlan.push({ type: "date", date: d });
+       var ym = d.slice(0, 7);
+       var nextYm = i + 1 < dates.length ? dates[i + 1].slice(0, 7) : null;
+       if (ym !== nextYm) {
+         var label = d.slice(0, 4) + "年" + String(Number(d.slice(5, 7))) + "月合計";
+         rowPlan.push({ type: "month", ym: ym, label: label });
+       }
+     });
+
+     sheet.clearContents();
+     // 書式(背景色・文字色・罫線・数値書式等)は内容と違ってclearContents()では消えないため、
+     // 「以前は集計行だった位置の背景色が残る」等の見た目のズレが起きる。そのため一旦すべて
+     // リセットしてから、以下で必要な書式だけを明示的に指定し直す
+     sheet.getRange(1, 1, sheet.getMaxRows(), sheet.getMaxColumns()).clearFormat();
+     sheet.getRange(1, 1, sheet.getMaxRows(), 1).setNumberFormat("@"); // 日付列をプレーンテキスト書式に固定(上記参照)
+
+     var COLOR_SUMMARY = "#efefef"; // 累計・◯年◯月合計の行
+     var COLOR_PARENT = "#cfe2f3"; // 親項目の行(「合計」「ポップアップ数値/LINE公式数値/成果」等)
+     var COLOR_METRIC_BG = "#1c4587"; // 指標名(PV数・imp数…)の行の背景
+     var COLOR_METRIC_TEXT = "#ffffff"; // 同上の文字色
+     var BORDER_COLOR = "#000000";
+     var BORDER_STYLE = SpreadsheetApp.BorderStyle.SOLID_MEDIUM; // 「2番目の太さ」の罫線
+
+     var summaryRowIndexes = []; // 背景色を付ける行番号(「累計」「◯年◯月合計」の行)
+     var spacerCols = []; // 区分別レポートの、まとまりごとの空白列(列幅12pxにする)
+     var finalTotalCols; // 列幅・フォント指定用に、最終的な列数を分岐の外で使えるようにしておく
+     var memoColNum = null; // メモ列の列番号(デイリーのみ。列幅を560pxにするため)
+
+     if (grouped) {
+       var totalCols = 1 + existingGroups.length * (metricHeaders.length + 2);
+       var out0 = new Array(totalCols).fill(""); // 1行目: 区分名(左隣の列。列を折りたたんだ時のアンカー用)
+       var outTotal = new Array(totalCols).fill(""); // 2行目: 「合計」(指標全体をまとめる親項目。区分名を表示)
+       var out2 = new Array(totalCols).fill(""); // 3行目: 親項目(ポップアップ数値/LINE公式数値/成果)
+       var out3 = new Array(totalCols).fill(""); // 4行目: 指標名
+       out0[0] = "日付";
+       var metricStartByGroup = {};
+       var mergeRanges = []; // 結合セル([行, 開始列, 列数])
+       var c2 = 2;
+       existingGroups.forEach(function (g) {
+         spacerCols.push(c2); // このまとまりの先頭の空白列
+         var labelCol = c2 + 1; // 1-indexed
+         var metricStart = labelCol + 1;
+         out0[labelCol - 1] = g;
+         // 「合計」行: 指標全体(ポップアップ数値+LINE公式数値+成果)をまとめて結合し、区分名を表示する
+         outTotal[metricStart - 1] = g;
+         mergeRanges.push([2, metricStart, metricHeaders.length]);
+         categoryRanges(metricStart).forEach(function (cat) {
+           out2[cat.start - 1] = cat.name;
+           if (cat.count > 1) mergeRanges.push([3, cat.start, cat.count]);
+         });
+         for (var i = 0; i < metricHeaders.length; i++) {
+           out3[metricStart - 1 + i] = metricHeaders[i];
+         }
+         metricStartByGroup[g] = metricStart;
+         c2 = labelCol + metricHeaders.length + 1;
+       });
+       sheet.getRange(1, 1, 1, totalCols).setValues([out0]);
+       sheet.getRange(2, 1, 1, totalCols).setValues([outTotal]);
+       sheet.getRange(3, 1, 1, totalCols).setValues([out2]);
+       sheet.getRange(4, 1, 1, totalCols).setValues([out3]);
+       mergeRanges.forEach(function (m) {
+         sheet.getRange(m[0], m[1], 1, m[2]).merge();
+       });
+       // 親項目の2行(「合計」行・「ポップアップ数値/LINE公式数値/成果」行)は薄い青、
+       // 指標名の行は濃い青地に白文字にする(区分名の行(1行目)は従来通り無地のまま)。
+       // グループ化用の見出し列(区分名)・空白列には色を付けないため、区分ごとの指標列の範囲だけに適用する。
+       // 日付列(1列目)は区分の指標列と同じ扱いにする
+       sheet.getRange(2, 1, 2, 1).setBackground(COLOR_PARENT);
+       sheet.getRange(4, 1, 1, 1).setBackground(COLOR_METRIC_BG).setFontColor(COLOR_METRIC_TEXT);
+       existingGroups.forEach(function (g) {
+         var ms = metricStartByGroup[g];
+         sheet.getRange(2, ms, 2, metricHeaders.length).setBackground(COLOR_PARENT);
+         sheet.getRange(4, ms, 1, metricHeaders.length).setBackground(COLOR_METRIC_BG).setFontColor(COLOR_METRIC_TEXT);
+       });
+
+       var outBody = rowPlan.map(function (rp, rowIdx) {
+         var r = new Array(totalCols).fill("");
+         if (rp.type === "date") {
+           r[0] = rp.date;
+         } else if (rp.type === "total") {
+           r[0] = "累計";
+           summaryRowIndexes.push(headerRows + 1 + rowIdx);
+         } else {
+           r[0] = rp.label;
+           summaryRowIndexes.push(headerRows + 1 + rowIdx);
+         }
+         existingGroups.forEach(function (g) {
+           var start = metricStartByGroup[g];
+           var values;
+           if (rp.type === "date") {
+             var entry = existingData[rp.date];
+             values = entry && entry[g] ? entry[g] : null;
+           } else {
+             var relevantDates = rp.type === "total" ? dates : datesByMonth[rp.ym];
+             var list = relevantDates.map(function (d) {
+               var e = existingData[d];
+               return e && e[g] ? e[g] : new Array(metricHeaders.length).fill("");
+             });
+             values = aggregateMetrics(list);
+           }
+           if (values) {
+             var sheetValues = toSheetPercentForm(values);
+             for (var i = 0; i < metricHeaders.length; i++) {
+               r[start - 1 + i] = sheetValues[i];
+             }
+           }
+         });
+         return r;
+       });
+       if (outBody.length > 0) {
+         sheet.getRange(headerRows + 1, 1, outBody.length, totalCols).setValues(outBody);
+         // 数値(指標の値)は右揃えにする(区分名・日付の列は含めない)
+         existingGroups.forEach(function (g) {
+           sheet.getRange(headerRows + 1, metricStartByGroup[g], outBody.length, metricHeaders.length).setHorizontalAlignment("right");
+           applyValueFormats(metricStartByGroup[g], outBody.length);
+         });
+       }
+       sheet.setFrozenRows(headerRows + 1); // 「累計」行までを固定
+       finalTotalCols = totalCols;
+     } else {
+       // デイリーのみ、請求額の右にもう1列「メモ」を設ける(スプシに直接手書きする欄。
+       // existingMemoで読み込んだ内容を、この関数の最後で該当する日付の行に書き戻す)
+       var MEMO_COL_OFFSET = metricHeaders.length; // 0-indexed。r[1+MEMO_COL_OFFSET]がメモ列
+       var totalCols2 = 1 + metricHeaders.length + 1;
+       var h1 = new Array(totalCols2).fill(""); // 1行目: 親項目
+       var h2 = new Array(totalCols2).fill(""); // 2行目: 指標名
+       h1[0] = "日付";
+       categoryRanges(2).forEach(function (cat) {
+         h1[cat.start - 1] = cat.name;
+       });
+       for (var i = 0; i < metricHeaders.length; i++) h2[1 + i] = metricHeaders[i];
+       h2[1 + MEMO_COL_OFFSET] = "メモ";
+       sheet.getRange(1, 1, 1, totalCols2).setValues([h1]);
+       sheet.getRange(2, 1, 1, totalCols2).setValues([h2]);
+       categoryRanges(2).forEach(function (cat) {
+         if (cat.count > 1) sheet.getRange(1, cat.start, 1, cat.count).merge();
+       });
+       // 親項目の行は薄い青、指標名の行は濃い青地に白文字にする(メモ列もこの2行は同じ色)
+       sheet.getRange(1, 1, 1, totalCols2).setBackground(COLOR_PARENT);
+       sheet.getRange(2, 1, 1, totalCols2).setBackground(COLOR_METRIC_BG).setFontColor(COLOR_METRIC_TEXT);
+
+       var outBody2 = rowPlan.map(function (rp, rowIdx) {
+         var r = new Array(totalCols2).fill("");
+         var values;
+         if (rp.type === "date") {
+           r[0] = rp.date;
+           values = existingData[rp.date] || new Array(metricHeaders.length).fill("");
+           if (existingMemo[rp.date]) r[1 + MEMO_COL_OFFSET] = existingMemo[rp.date];
+         } else if (rp.type === "total") {
+           r[0] = "累計";
+           summaryRowIndexes.push(headerRows + 1 + rowIdx);
+           values = aggregateMetrics(
+             dates.map(function (d) {
+               return existingData[d] || new Array(metricHeaders.length).fill("");
+             })
+           );
+         } else {
+           r[0] = rp.label;
+           summaryRowIndexes.push(headerRows + 1 + rowIdx);
+           values = aggregateMetrics(
+             datesByMonth[rp.ym].map(function (d) {
+               return existingData[d] || new Array(metricHeaders.length).fill("");
+             })
+           );
+         }
+         var sheetValues = toSheetPercentForm(values);
+         for (var i = 0; i < metricHeaders.length; i++) r[1 + i] = sheetValues[i];
+         return r;
+       });
+       if (outBody2.length > 0) {
+         sheet.getRange(headerRows + 1, 1, outBody2.length, totalCols2).setValues(outBody2);
+         // 数値(指標の値)は右揃えにする(日付・メモの列は含めない)
+         sheet.getRange(headerRows + 1, 2, outBody2.length, metricHeaders.length).setHorizontalAlignment("right");
+         applyValueFormats(2, outBody2.length);
+       }
+       sheet.setFrozenRows(headerRows + 1); // 「累計」行までを固定
+       finalTotalCols = totalCols2;
+       memoColNum = totalCols2;
+     }
+
+     var finalBodyRows = grouped ? outBody.length : outBody2.length;
+
+     // 「累計」「◯年◯月合計」の行は、太字ではなく背景色(薄いグレー)で区別する。
+     // グループ化用の見出し列(区分名)・空白列には色を付けないため、区分別レポートは日付列・
+     // 区分ごとの指標列の範囲だけに適用する(デイリーは日付・メモを含む行全体)
+     summaryRowIndexes.forEach(function (rowIndex) {
+       if (grouped) {
+         sheet.getRange(rowIndex, 1, 1, 1).setBackground(COLOR_SUMMARY); // 日付列
+         existingGroups.forEach(function (g) {
+           sheet.getRange(rowIndex, metricStartByGroup[g], 1, metricHeaders.length).setBackground(COLOR_SUMMARY);
+         });
+       } else {
+         sheet.getRange(rowIndex, 1, 1, finalTotalCols).setBackground(COLOR_SUMMARY);
+       }
+     });
+
+     sheet.setFrozenColumns(1);
+
+     // 列幅・フォントサイズ・項目名の配置を固定値で指定する(内容に合わせた自動調整はしない)
+     sheet.setColumnWidth(1, 95); // 日付列
+     for (var wCol = 2; wCol <= finalTotalCols; wCol++) {
+       var w = spacerCols.indexOf(wCol) !== -1 ? 12 : wCol === memoColNum ? 560 : 80; // 空白列12px、メモ列560px、それ以外80px
+       sheet.setColumnWidth(wCol, w);
+     }
+     sheet.getRange(1, 1, headerRows + finalBodyRows, finalTotalCols).setFontSize(9);
+     // 項目名(区分名/合計/親項目/指標名の見出し行)は中央揃え・太字にする。数値は上ですでに右揃え済み
+     sheet.getRange(1, 1, headerRows, finalTotalCols).setHorizontalAlignment("center").setFontWeight("bold");
+
+     // 罫線(2番目の太さ)。
+     // デイリーはテーブル全体を1つの枠で囲み、「累計」「◯年◯月合計」の行も1行ごとに上下へ枠線を足す。
+     // 区分別の4レポートは、グループ化用の見出し列・空白列には罫線を付けないため、日付列・区分ごとの
+     // 親項目(ポップアップ数値/LINE公式数値/成果)の範囲へ、それぞれ単独で箱型の罫線を引く
+     // (隣り合う範囲同士が接することで、項目ごとの外枠と、親項目同士の境目の縦線の両方になる)
+     function borderBlock(row, col, numRows, numCols) {
+       sheet.getRange(row, col, numRows, numCols).setBorder(true, true, true, true, false, false, BORDER_COLOR, BORDER_STYLE);
+     }
+     if (grouped) {
+       var groupBlockRows = headerRows - 1 + outBody.length; // 2行目(合計)から最終データ行までの行数
+       var belowTotalRows = groupBlockRows - 1; // 3行目(親項目)から最終データ行までの行数
+       borderBlock(2, 1, groupBlockRows, 1); // 日付列(結合されていないため、2行目から最終行まで1つの箱でよい)
+       existingGroups.forEach(function (g) {
+         var ms = metricStartByGroup[g];
+         // 2行目(「合計」)は区分の指標列全体が1つに結合されたセルのため、区分ごとに分けて罫線を
+         // 引いても正しく反映されない(結合セルの一部だけを範囲指定しても境界が認識されないことがある)。
+         // そのため、区分の指標列全体をまとめて1つの箱として先に囲む
+         borderBlock(2, ms, 1, metricHeaders.length);
+         // 3行目(親項目)から最終行までは、区分ごとに結合されているため、親項目ごとに分けて箱を
+         // 引くと隣同士が接して境目の縦線になる。ここで3行目の上端に罫線を引くことで、
+         // 2行目(合計)との間の横線も同時に生まれる
+         categoryRanges(ms).forEach(function (cat) {
+           borderBlock(3, cat.start, belowTotalRows, cat.count);
+         });
+       });
+       // 「累計」「◯年◯月合計」の行は、上下にも罫線を足して1行ずつ区別する。左右・縦の罫線は
+       // 上記ですでに引いているため、ここではtop/bottomだけ指定し、他はnull(変更なし)にして、
+       // 親項目同士の境目の縦線を消してしまわないようにする
+       summaryRowIndexes.forEach(function (rowIndex) {
+         sheet.getRange(rowIndex, 1, 1, 1).setBorder(true, null, true, null, null, null, BORDER_COLOR, BORDER_STYLE);
+         existingGroups.forEach(function (g) {
+           sheet.getRange(rowIndex, metricStartByGroup[g], 1, metricHeaders.length).setBorder(true, null, true, null, null, null, BORDER_COLOR, BORDER_STYLE);
+         });
+       });
+     } else {
+       // デイリーも、日付列・親項目(ポップアップ数値/LINE公式数値/成果)・メモ列をそれぞれ単独で
+       // 箱型に囲む(隣り合う範囲同士が接することで、親項目同士の境目の縦線になる)
+       borderBlock(1, 1, headerRows + finalBodyRows, 1); // 日付列
+       categoryRanges(2).forEach(function (cat) {
+         borderBlock(1, cat.start, headerRows + finalBodyRows, cat.count);
+       });
+       borderBlock(1, memoColNum, headerRows + finalBodyRows, 1); // メモ列
+       // 「累計」「◯年◯月合計」の行は、上下にも罫線を足して1行ずつ区別する。左右・縦の罫線は
+       // 上記ですでに引いているため、ここではtop/bottomだけ指定し、他はnull(変更なし)にする
+       summaryRowIndexes.forEach(function (rowIndex) {
+         sheet.getRange(rowIndex, 1, 1, 1).setBorder(true, null, true, null, null, null, BORDER_COLOR, BORDER_STYLE);
+         categoryRanges(2).forEach(function (cat) {
+           sheet.getRange(rowIndex, cat.start, 1, cat.count).setBorder(true, null, true, null, null, null, BORDER_COLOR, BORDER_STYLE);
+         });
+         sheet.getRange(rowIndex, memoColNum, 1, 1).setBorder(true, null, true, null, null, null, BORDER_COLOR, BORDER_STYLE);
+       });
+     }
+   }
    ```
 
 3. 「デプロイ」→「新しいデプロイ」→種類は「ウェブアプリ」を選択
@@ -265,6 +763,28 @@ LINEのLIFFという仕組みは、「`https://liff.line.me/{LIFF ID}` という
 4. デプロイ後に発行される「ウェブアプリのURL」を`.env.local`の`SHEETS_EXPORT_WEBHOOK_URL`に設定する
 
 ※ `spreadsheetId`が指定された場合、GASの実行者アカウントがそのスプレッドシートに編集権限を持っている必要がある(手順3で選んだ「実行するユーザー」のGoogleアカウントに、書き込み先スプレッドシートの編集者としてのアクセス権を付与しておくこと)。
+
+### レポートの一括スプレッドシート送信
+
+「データ」メニューの「レポートのスプシ送信」(`/admin/reports/sheet-export`)画面から、日次・ポップアップ別・シナリオ別・訴求別・離脱地点別の5つのレポートを、指定した期間についてボタン1つでまとめて計算し、同じスプレッドシート内の5つのシートへ送信できる。管理者権限のみ(`/api/report/sheet-export`もproxy.tsの対象)。
+
+- **送信先の仕組み**: 上記のCSV・スプレッドシート出力と同じGAS Webアプリ(`SHEETS_EXPORT_WEBHOOK_URL`)を使う。新しく追加した書き込み方法`writeMode: "merge"`(蓄積モード)で送信する
+- **スプレッドシート(URLまたはID)の入力欄**: 空欄の場合はGAS側のバインド先スプレッドシートを使う。入力した内容は、上記のログ画面の「スプレッドシートに送信」と同様、ブラウザに保存され次回開いた際に初期値として復元される(ブラウザ単位の保存のため、別のPC・ブラウザでは再入力が必要)
+- **送信先のシート名(固定)**: 「デイリー」(日次)・「デイリー(p別)」(ポップアップ別)・「デイリー(s別)」(シナリオ別)・「デイリー(訴求別)」(訴求別)・「デイリー(離脱地点別)」(離脱地点別)
+- **蓄積モードの動き**: 送信するたびに、日付をキーとして既存の行を更新し、まだ無い日付は追加する(過去の送信内容を上書き・消去することはない)。何度でも同じ期間を再送信してよい
+- **指標の列構成**: 「デイリー」はPV数・imp数・imp率・CL数・CL率・友だち追加数・友だち追加率・CV数・CVR・請求額の10列(さらに右に、下記のメモ列が付く)。区分別の4レポート(ポップアップ別・シナリオ別・訴求別・離脱地点別)は、請求額を除いた9列(区分ごとの請求額は意味のある集計にならないため)
+- **メモ列(デイリーのみ)**: 請求額の右にもう1列「メモ」(列幅560px)がある。この列はツール側からは一切書き込まず、スプレッドシート上で直接手書きするための欄(送信するたびに、既存の内容を日付ごとに読み込んでそのまま書き戻すので、再送信で消えることはない)。ただし、新しく日付が増えて行の並びが変わったり、下記の「見出しの行数を変更した場合」のようにシートの中身を一度削除した場合は、消えてしまうので注意
+- **見出しの階層構造**: 指標の列には親項目の見出しを付けている。「PV数・imp数・imp率・CL数・CL率」→「ポップアップ数値」、「友だち追加数・友だち追加率」→「LINE公式数値」、「CV数・CVR・(デイリーのみ)請求額」→「成果」の3つにまとめ、それぞれ結合セルで表示する。区分別の4レポートはさらにその上に、指標全体(ポップアップ数値+LINE公式数値+成果)をまとめる「合計」にあたる行があり、ここにも区分名(ポップアップ名・シナリオ名・訴求名・離脱地点名)を結合セルで表示する。また、列を折りたたんだ時のアンカーとして、一番左(区分名専用の列)にも同じ区分名を表示している。見出しは区分別の4レポートは合計4行(区分名/合計/親項目/指標名)、「デイリー」は区分が無いため2行(親項目/指標名)になる
+- **区分(ポップアップ・シナリオ・訴求・離脱地点)の列構成**: 日付列の右に、区分ごとに「空白列1列+区分名を記載した列1列+指標9列」のまとまりを左から並べる。新しい区分が登場すると、既存の並びの右端に新しいまとまりが追加される。それより前の日付の行では、新しく追加された区分の列は空欄のままになる(0は入れない)
+- **列のグループ化**: 区分が増えると横に長くなるため、区分ごとの指標列を選択して「データ」→「グループ化」(列のグループ化)をしておくと、折りたたんで見やすくできる。区分名の列は折りたたんでも見える位置(まとまりの左端)に置いているので、どの区分が隠れているか分かる。これはスプレッドシート側で一度手動で設定すれば、以後の送信(値の書き換え)では列の並びは変わらないので、設定し直す必要はない(新しい区分が増えて列が追加されたときだけ、その区分の列を追加でグループ化する)
+- **見出しの行数を変更した場合の注意**: 本機能のバージョンアップ等で見出しの行数・列構成が変わった場合、既存のシートには古い形式のデータが残っているため、新しいバージョンで送信する前に、対象のシート(デイリー等)の中身を一度すべて削除してから送信し直すこと(列のずれを防ぐため。この場合「メモ」列の内容も消えるため、必要であれば事前に控えておく)
+- **「累計」「◯年◯月合計」行**: 指標の見出し行の直下に、シートにある全期間の合計を示す「累計」行を表示する。また、月が変わるごとに、その月の最後の日付行の直後に「2026年10月合計」のようなその月の合計行を挿入する(今日時点でまだ月の途中であれば、そこまでの合計になる)。区分別の4レポートは、区分(列のまとまり)ごとに累計・月合計を出す。これらはすべて送信のたびに実際の日付の行から計算し直すため、ユーザーが直接編集しても次の送信で上書きされる。率の指標(imp率・CL率・友だち追加率・CVR)は、日々の%をそのまま平均するのではなく、分子・分母(例: CV数と友だち追加数)それぞれの合計から比率を再計算している
+- **色分け・太字**: 見出しの行(区分別の4レポートは区分名/合計/親項目/指標名の4行、デイリーは親項目/指標名の2行)はすべて中央揃え・太字にする。色はこのうち「合計」行・「ポップアップ数値/LINE公式数値/成果」行(親項目にあたる行。デイリーは親項目行のみ)が薄い青(`#cfe2f3`)、指標名(PV数・imp数…)の行が濃い青(`#1c4587`)の地に白文字で、区分別レポートの一番左の区分名の行(1行目)は太字のまま色は付けない(従来通り無地)。「累計」「◯年◯月合計」行は太字にせず、薄いグレー(`#efefef`)の背景色で区別する。区分別の4レポートは、日付列・区分ごとの指標列には上記の色を付けるが、列を折りたたんだ時のアンカーである区分名の列・区分の間の空白列には付けない。これらの書式は送信のたびに一旦リセットしてから付け直すため、行の位置がずれても古い書式が残ったままになることはない
+- **罫線**: 日付列・「ポップアップ数値」「LINE公式数値」「成果」(デイリーはさらにメモ列も)を、それぞれ単独で箱型(2番目の太さ)に囲む(隣り合う範囲同士が接することで、項目ごとの外枠と、親項目同士の境目の縦線の両方になり、縦線は「累計」「◯年◯月合計」の行も含めてつながる)。区分別の4レポートは区分名の列・空白列には罫線を付けない。「累計」「◯年◯月合計」の行は、さらに上下にも罫線を足して1行ずつ区別する
+- **列幅・フォント・配置**: 送信するたびに、列幅・フォントサイズ・文字の配置をすべて固定値で指定し直す(内容に合わせた自動調整はしない)。日付列は95px、メモ列(デイリーのみ)は560px、それ以外の列は80px(区分別レポートの、まとまりとまとまりの間の空白列のみ12px)。フォントサイズは全体9pt。項目名の見出し行(区分名/合計/親項目/指標名)は中央揃え、指標の数値は右揃え
+- **数値の表示形式**: 率の指標(imp率・CL率・友だち追加率・CVR)は、Sheets標準のパーセント書式(0.0%)で「25.3%」のように表示する。セルに実際に入る値は、Sheetsのパーセント形式の標準的な持ち方に合わせて分数(0.253)にしている(本機能の計算上は25.3のような%表記で扱っているため、シートに書き込む直前・シートから読み込んだ直後にそれぞれ変換している)。これにより、スプレッドシート上で直接「25.3%」のように手入力した値も、Sheets標準の入力と同じ形式になるため正しく読み込める。請求額は「¥14,300」のように¥と桁区切りを付けて表示する。それ以外の数値の指標(PV数・imp数・CL数・友だち追加数・CV数)は、1000単位でカンマ区切り(「1,234」のような表示)にする
+- **行・列の固定**: 見出しの行に加えて「累計」行までを固定表示する(スクロールしても常に見える)。列は1列目(日付)を固定する
+- **データ量**: 送信するたびに、指定した期間のレポート値をまとめて送るだけで、Firestore側の生ログ(クリックログ・成果ログ等)をスプレッドシートに移すわけではない。期間を広げても送信されるのは「日数 × 区分数」程度の行数で、料金が問題になるような量にはならない
 
 ### エラー・システムログ
 
